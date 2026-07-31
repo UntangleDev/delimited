@@ -49,7 +49,7 @@ for the `:decimal` type.
 ```elixir
 def deps do
   [
-    {:delimited, "~> 0.3"},
+    {:delimited, "~> 0.4"},
     {:decimal, "~> 3.0"}
   ]
 end

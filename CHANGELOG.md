@@ -4,6 +4,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.4.0
+
 ### Breaking
 
 - Refuse a value before writing it when the declared read path would reject it
