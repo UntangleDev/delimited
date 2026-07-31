@@ -6,7 +6,10 @@ defmodule Delimited.PropertyTest do
   alias Delimited.Encoder
   alias Delimited.Fixed
   alias Delimited.Parser
+  alias Delimited.Test.Address
   alias Delimited.Test.Employee
+  alias Delimited.Test.LineItem
+  alias Delimited.Test.Order
   alias Delimited.Test.Payment
 
   # Characters chosen to land on the parser's decisions rather than around them:
@@ -60,6 +63,62 @@ defmodule Delimited.PropertyTest do
 
       assert Delimited.decode!(Payment, encoded) == payments
     end
+  end
+
+  property "every embedded value survives being written and read back" do
+    check all(orders <- list_of(order(), max_length: 8)) do
+      encoded = Order |> Delimited.encode!(orders) |> Enum.to_list() |> IO.iodata_to_binary()
+
+      assert Delimited.decode!(Order, encoded) == orders
+    end
+  end
+
+  defp order do
+    gen all(
+          id <- one_of([nil, integer()]),
+          billing <- one_of([constant(nil), address()]),
+          shipping <- one_of([constant(nil), address()]),
+          lines <- list_of(one_of([constant(nil), line_item()]), length: 2)
+        ) do
+      %Order{id: id, billing: billing, shipping: shipping, lines: lines}
+    end
+  end
+
+  # A group holding nothing is written blank and read back as no group at all,
+  # so a group that is meant to survive has to hold something. That rule is the
+  # property rather than an inconvenience around it, which is why the generator
+  # fills a group that came out empty instead of discarding it.
+  defp address do
+    gen all(
+          street <- one_of([constant(nil), cell_text()]),
+          city <- one_of([constant(nil), cell_text()]),
+          fallback <- cell_text()
+        ) do
+      case {street, city} do
+        {nil, nil} -> %Address{street: fallback, city: nil}
+        {street, city} -> %Address{street: street, city: city}
+      end
+    end
+  end
+
+  defp line_item do
+    gen all(
+          sku <- one_of([constant(nil), cell_text()]),
+          qty <- one_of([constant(nil), integer(0..9999)]),
+          fallback <- integer(0..9999)
+        ) do
+      case {sku, qty} do
+        {nil, nil} -> %LineItem{sku: nil, qty: fallback}
+        {sku, qty} -> %LineItem{sku: sku, qty: qty}
+      end
+    end
+  end
+
+  defp cell_text do
+    @awkward
+    |> member_of()
+    |> list_of(min_length: 1, max_length: 4)
+    |> map(&Enum.join/1)
   end
 
   # Twelve bytes so that it frames identically as a line and as a block.

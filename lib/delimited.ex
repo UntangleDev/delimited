@@ -75,6 +75,7 @@ defmodule Delimited do
   """
 
   alias Delimited.Dialect
+  alias Delimited.Embed
   alias Delimited.Error
   alias Delimited.Reader
   alias Delimited.Schema
@@ -223,12 +224,13 @@ defmodule Delimited do
   @spec write(module(), Path.t(), Enumerable.t(row()), options()) :: :ok | {:error, Error.t()}
   def write(schema, path, rows, opts \\ []) when is_binary(path) do
     dialect = Schema.dialect_for!(schema, opts)
-    fields = schema.__delimited__(:fields)
+    shape = schema.__delimited__(:shape)
+    fields = Embed.flatten(shape)
 
     case File.open(path, @write_modes) do
       {:ok, device} ->
         try do
-          with :ok <- write_rows(device, schema, fields, rows, dialect, path) do
+          with :ok <- write_rows(device, schema, shape, fields, rows, dialect, path) do
             close(device, schema, path)
           end
         after
@@ -274,13 +276,14 @@ defmodule Delimited do
   @spec encode!(module(), Enumerable.t(row()), options()) :: Enumerable.t(iodata())
   def encode!(schema, rows, opts \\ []) do
     dialect = Schema.dialect_for!(schema, opts)
-    fields = schema.__delimited__(:fields)
+    shape = schema.__delimited__(:shape)
+    fields = Embed.flatten(shape)
 
     encoded =
       rows
       |> Stream.with_index(first_row_line(dialect))
       |> Stream.map(fn {row, line} ->
-        case Writer.row(schema, fields, row, line, dialect) do
+        case Writer.row(schema, shape, row, line, dialect) do
           {:ok, iodata} -> iodata
           {:error, error} -> raise error
         end
@@ -325,13 +328,13 @@ defmodule Delimited do
   defp first_row_line(%{headers: true}), do: 2
   defp first_row_line(_dialect), do: 1
 
-  defp write_rows(device, schema, fields, rows, dialect, path) do
+  defp write_rows(device, schema, shape, fields, rows, dialect, path) do
     with {:ok, prelude} <- Writer.prelude(fields, dialect),
          :ok <- binwrite(device, prelude, schema, path) do
       rows
       |> Stream.with_index(first_row_line(dialect))
       |> Enum.reduce_while(:ok, fn {row, line}, :ok ->
-        device |> write_row(schema, fields, row, line, dialect, path) |> continue()
+        device |> write_row(schema, shape, row, line, dialect, path) |> continue()
       end)
     end
   end
@@ -339,8 +342,8 @@ defmodule Delimited do
   defp continue(:ok), do: {:cont, :ok}
   defp continue({:error, error}), do: {:halt, {:error, error}}
 
-  defp write_row(device, schema, fields, row, line, dialect, path) do
-    with {:ok, iodata} <- Writer.row(schema, fields, row, line, dialect) do
+  defp write_row(device, schema, shape, row, line, dialect, path) do
+    with {:ok, iodata} <- Writer.row(schema, shape, row, line, dialect) do
       binwrite(device, iodata, schema, path)
     end
   end

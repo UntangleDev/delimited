@@ -56,7 +56,7 @@ defmodule Delimited.SchemaTest do
     end
 
     test "refuses two fields with the same name" do
-      assert_raise ArgumentError, ~r/declares the field :a more than once/, fn ->
+      assert_raise ArgumentError, ~r/declares the name :a more than once/, fn ->
         defmodule DuplicateName do
           use Delimited.Schema
 

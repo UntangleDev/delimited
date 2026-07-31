@@ -212,6 +212,65 @@ Use it as `field :salary, Pence`. The error string completes the sentence
 recognise are passed on to the type, so `field :salary, Pence, symbol: "$"`
 reaches `cast/2` as `[symbol: "$"]`.
 
+## Repeated groups of columns
+
+A file that carries `billing_street`, `billing_city`, `shipping_street`, and
+`shipping_city` is carrying one group twice. Declare it once:
+
+```elixir
+defmodule Address do
+  use Delimited.Schema
+
+  delimited_schema do
+    field :street, :string
+    field :city, :string
+  end
+end
+
+defmodule Order do
+  use Delimited.Schema
+
+  delimited_schema do
+    field :id, :integer
+    embeds_one :billing, Address, prefix: "billing_"
+    embeds_one :shipping, Address, prefix: "shipping_"
+    embeds_many :lines, LineItem, count: 2, prefix: "item_{n}_"
+  end
+end
+
+Delimited.read(Order, "orders.csv")
+#=> [%Order{id: 1,
+#           billing:  %Address{street: "1 High St", city: "Leeds"},
+#           shipping: nil,
+#           lines: [%LineItem{sku: "A-1", qty: 3}, nil]}]
+```
+
+The point is not brevity. Two copies of a column list drift apart, and the way
+they drift is `shipping_postcode` quietly reading the billing one. Declared
+once, they cannot.
+
+`embeds_many` needs a `:count`, because a row holds a fixed number of columns,
+and a `{n}` in its prefix to tell the copies apart.
+
+**A group whose every column is empty reads as `nil`**, and `nil` writes its
+columns back empty — the same rule the fixed layout uses for a blank field. One
+column filled makes the group present. `required: true` makes an absent group an
+error instead.
+
+Under the fixed layout there are no headers to prefix, so an embed says where
+its bytes start and the embedded schema's own positions are counted from there:
+
+```elixir
+delimited_schema :fixed do
+  field :record_type, :string, at: 1..1
+  embeds_one :payer, Party, at: 2      # Party's 1..6 and 7..14 land at 2..7, 8..15
+  embeds_one :payee, Party, at: 16     # and again at 16..21, 22..29
+end
+```
+
+Repeated blocks follow one another by the embedded schema's own width, or by a
+declared `:stride` where the file leaves a gap between them.
+
 ## Fixed-width files
 
 A file with no delimiters at all — where a field is a range of bytes — is the

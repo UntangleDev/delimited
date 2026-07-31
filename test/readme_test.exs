@@ -186,6 +186,68 @@ defmodule Delimited.ReadmeTest do
              Delimited.decode(Employee, csv, comment: "#", on_missing_header: :ignore)
   end
 
+  defmodule Address do
+    @moduledoc false
+
+    use Delimited.Schema
+
+    delimited_schema do
+      field :street, :string
+      field :city, :string
+    end
+  end
+
+  defmodule LineItem do
+    @moduledoc false
+
+    use Delimited.Schema
+
+    delimited_schema do
+      field :sku, :string
+      field :qty, :integer
+    end
+  end
+
+  defmodule Order do
+    @moduledoc false
+
+    use Delimited.Schema
+
+    delimited_schema do
+      field :id, :integer
+      embeds_one :billing, Address, prefix: "billing_"
+      embeds_one :shipping, Address, prefix: "shipping_"
+      embeds_many :lines, LineItem, count: 2, prefix: "item_{n}_"
+    end
+  end
+
+  describe "the embedded schema example" do
+    test "reads the nesting the comment claims" do
+      csv =
+        "id,billing_street,billing_city,shipping_street,shipping_city," <>
+          "item_1_sku,item_1_qty,item_2_sku,item_2_qty\n" <>
+          "1,1 High St,Leeds,,,A-1,3,,\n"
+
+      assert {:ok, [order]} = Delimited.decode(Order, csv)
+
+      assert order == %Order{
+               id: 1,
+               billing: %Address{street: "1 High St", city: "Leeds"},
+               shipping: nil,
+               lines: [%LineItem{sku: "A-1", qty: 3}, nil]
+             }
+    end
+
+    test "one column filled makes the group present" do
+      csv =
+        "id,billing_street,billing_city,shipping_street,shipping_city," <>
+          "item_1_sku,item_1_qty,item_2_sku,item_2_qty\n1,,Leeds,,,,,,\n"
+
+      assert {:ok, [%Order{billing: %Address{street: nil, city: "Leeds"}}]} =
+               Delimited.decode(Order, csv)
+    end
+  end
+
   describe "the fixed-width example" do
     test "reads the positions the comments claim" do
       record = "6" <> "12345678" <> "  " <> "00001234" <> "Lovelace, Ada     " <> "1"

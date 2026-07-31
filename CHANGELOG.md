@@ -4,6 +4,32 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Embedded schemas
+
+- Add `embeds_one/3` and `embeds_many/3`, so that a group of columns a file
+  carries more than once is declared once:
+  `embeds_one :billing, Address, prefix: "billing_"`. Two copies of a column
+  list drift apart, and the way they drift is one group quietly reading
+  another's columns.
+- `embeds_many` repeats a group a declared number of times, numbering the
+  copies through a `{n}` in its prefix: `count: 2, prefix: "item_{n}_"`.
+- Under the fixed layout an embed says where its bytes start instead of
+  carrying a prefix, and the embedded schema's own positions are counted from
+  there. Repeated blocks follow one another by the embedded schema's width, or
+  by a declared `:stride`.
+- Read a group whose every column is empty as `nil`, recursively, and write
+  `nil` back as empty columns, which is the rule the fixed layout already used
+  for a blank field. `required: true` makes an absent group an error.
+- An embed is expanded when the schema compiles, so `__delimited__(:fields)`,
+  `Delimited.headers/1`, and the fixed-position checks are unchanged and work on
+  embedded fields without knowing they are embedded.
+- Check embeds when the schema compiles: a module that is not a schema, one
+  declared with the other layout, a repeated group with no `:count` or an
+  unnumbered prefix, and two embeds claiming the same columns are all build
+  failures.
+- Field and embed names must now be unique within one schema rather than across
+  the whole file, so two embeds of the same schema may each hold a `:street`.
+
 ## 0.2.0
 
 ### Breaking

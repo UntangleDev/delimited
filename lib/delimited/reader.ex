@@ -18,6 +18,7 @@ defmodule Delimited.Reader do
   # binary, and by nothing else.
 
   alias Delimited.Dialect
+  alias Delimited.Embed
   alias Delimited.Error
   alias Delimited.Field
   alias Delimited.Fixed
@@ -185,12 +186,15 @@ defmodule Delimited.Reader do
     end
   end
 
+  # The values come out in the order the fields were declared, which is the
+  # order a schema's shape flattens in, so the two are walked together to
+  # rebuild whatever nesting the schema declared.
   defp cast_cells(schema, mapping, line, cells, dialect) do
     {values, errors} =
       Enum.reduce(mapping, {[], []}, fn {field, index}, {values, errors} ->
         case cast_cell(field, index, cells, dialect) do
           {:ok, value} ->
-            {[{field.name, value} | values], errors}
+            {[value | values], errors}
 
           {:error, error} ->
             {values, [locate(error, schema, field, line, index) | errors]}
@@ -198,8 +202,15 @@ defmodule Delimited.Reader do
       end)
 
     case errors do
-      [] -> {:ok, struct!(schema, values)}
+      [] -> build(schema, Enum.reverse(values), line)
       errors -> {:error, Enum.reverse(errors)}
+    end
+  end
+
+  defp build(schema, values, line) do
+    case Embed.build(schema.__delimited__(:shape), values, schema, line) do
+      {:ok, struct} -> {:ok, struct}
+      {:error, errors} -> {:error, Enum.map(errors, &%{&1 | schema: schema})}
     end
   end
 

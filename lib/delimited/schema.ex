@@ -47,18 +47,58 @@ defmodule Delimited.Schema do
   file the schema was written for, not the only file it will ever meet. See
   `Delimited.Dialect`.
 
+  ## Repeated groups of columns
+
+  A file often carries the same group of columns more than once. Declare the
+  group once and embed it:
+
+      defmodule Address do
+        use Delimited.Schema
+
+        delimited_schema do
+          field :street, :string
+          field :city, :string
+        end
+      end
+
+      defmodule Order do
+        use Delimited.Schema
+
+        delimited_schema do
+          field :id, :integer
+          embeds_one :billing, Address, prefix: "billing_"
+          embeds_one :shipping, Address, prefix: "shipping_"
+          embeds_many :lines, LineItem, count: 2, prefix: "item_{n}_"
+        end
+      end
+
+  That reads `billing_street`, `shipping_street`, `item_1_sku`, `item_2_sku`
+  and the rest into `%Order{billing: %Address{}, lines: [%LineItem{}, ...]}`.
+  Declaring the group once is the point: two copies of a column list cannot
+  drift apart, and `shipping_postcode` cannot end up reading the billing one.
+
+  An embed is resolved when the schema compiles, so what the reader works with
+  is still a flat list of columns. See `embeds_one/3` and `embeds_many/3`.
+
+  A group whose every column is empty reads as `nil`, and `nil` writes its
+  columns back empty, which is the same rule the fixed layout uses for a blank
+  field. One column filled makes the group present.
+
   ## Introspection
 
-    * `__delimited__(:fields)` returns the `Delimited.Field` structs in
-      declaration order.
+    * `__delimited__(:fields)` returns the `Delimited.Field` structs in the
+      order the file holds them, with any embedded schema's fields expanded in
+      place.
     * `__delimited__(:dialect)` returns the declared `Delimited.Dialect`.
 
   Both are public, because generating a blank template, a column list for an
   upload form, or documentation from the schema is the point of declaring it
-  once.
+  once. `__delimited__(:shape)` also exists, and holds the nesting that the
+  flat list cannot express; it is internal and may change.
   """
 
   alias Delimited.Dialect
+  alias Delimited.Embed
   alias Delimited.Field
 
   @doc false
@@ -76,25 +116,33 @@ defmodule Delimited.Schema do
   """
   defmacro delimited_schema(format \\ :csv, opts \\ [], do: block) do
     quote do
-      Module.register_attribute(__MODULE__, :delimited_fields, accumulate: true)
+      Module.register_attribute(__MODULE__, :delimited_declarations, accumulate: true)
 
       try do
-        import Delimited.Schema, only: [field: 2, field: 3]
+        import Delimited.Schema,
+          only: [field: 2, field: 3, embeds_one: 2, embeds_one: 3, embeds_many: 3]
+
         unquote(block)
       after
         :ok
       end
 
       # The dialect is built first because the layout decides which field
-      # options are required and which are meaningless.
+      # options are required and which are meaningless, and how an embed is
+      # told apart from its siblings.
       @delimited_dialect Delimited.Dialect.new!(unquote(format), unquote(opts))
+      @delimited_shape Delimited.Schema.__shape__(
+                         __MODULE__,
+                         @delimited_declarations,
+                         @delimited_dialect
+                       )
       @delimited_field_list Delimited.Schema.__fields__(
                               __MODULE__,
-                              @delimited_fields,
+                              @delimited_shape,
                               @delimited_dialect
                             )
 
-      defstruct Enum.map(@delimited_field_list, &{&1.name, &1.default})
+      defstruct Delimited.Schema.__struct_keys__(@delimited_shape)
 
       @typedoc "A row of #{inspect(__MODULE__)}."
       @type t :: %__MODULE__{}
@@ -104,8 +152,10 @@ defmodule Delimited.Schema do
       """
       @spec __delimited__(:fields) :: [Delimited.Field.t()]
       @spec __delimited__(:dialect) :: Delimited.Dialect.t()
+      @spec __delimited__(:shape) :: [Delimited.Embed.element()]
       def __delimited__(:fields), do: @delimited_field_list
       def __delimited__(:dialect), do: @delimited_dialect
+      def __delimited__(:shape), do: @delimited_shape
     end
   end
 
@@ -122,16 +172,100 @@ defmodule Delimited.Schema do
     end
   end
 
-  @doc false
-  @spec __field__(module(), atom(), term(), keyword()) :: :ok
-  def __field__(module, name, type, opts) do
-    Module.put_attribute(module, :delimited_fields, Field.new!(name, type, opts))
+  @doc """
+  Embeds another schema's columns in this one.
+
+      embeds_one :billing, Address, prefix: "billing_"
+
+  Reads `billing_street` and `billing_city` into `%Order{billing: %Address{}}`.
+  Under the fixed layout there are no headers to prefix, so the embed says where
+  its bytes start instead, and the embedded schema's own positions are counted
+  from there:
+
+      embeds_one :payer, Party, at: 2
+
+  An embed whose every column is empty reads as `nil`, which is what an absent
+  group means. `required: true` makes that an error instead.
+  """
+  defmacro embeds_one(name, schema, opts \\ []) do
+    quote do
+      Delimited.Schema.__embed__(
+        __MODULE__,
+        :one,
+        unquote(name),
+        unquote(schema),
+        unquote(opts)
+      )
+    end
+  end
+
+  @doc """
+  Embeds another schema's columns a declared number of times.
+
+      embeds_many :lines, LineItem, count: 3, prefix: "item_{n}_"
+
+  Reads `item_1_sku`, `item_2_sku`, and `item_3_sku` into
+  `%Order{lines: [%LineItem{}, %LineItem{}, %LineItem{}]}`. `{n}` becomes each
+  copy's number, and is required, because otherwise every copy would claim the
+  same columns.
+
+  A row holds a fixed number of columns, so a repeated group has to say how many
+  times it repeats. Under the fixed layout the copies follow one another by the
+  embedded schema's own width, or by a declared `:stride` where the file leaves
+  a gap between them.
+  """
+  defmacro embeds_many(name, schema, opts) do
+    quote do
+      Delimited.Schema.__embed__(
+        __MODULE__,
+        :many,
+        unquote(name),
+        unquote(schema),
+        unquote(opts)
+      )
+    end
   end
 
   @doc false
-  @spec __fields__(module(), [Field.t()], Dialect.t()) :: [Field.t()]
-  def __fields__(module, accumulated, %Dialect{} = dialect) do
-    fields = Enum.reverse(accumulated)
+  @spec __field__(module(), atom(), term(), keyword()) :: :ok
+  def __field__(module, name, type, opts) do
+    Module.put_attribute(module, :delimited_declarations, {:field, Field.new!(name, type, opts)})
+  end
+
+  @doc false
+  @spec __embed__(module(), :one | :many, atom(), module(), keyword()) :: :ok
+  def __embed__(module, kind, name, schema, opts) when is_atom(name) and is_list(opts) do
+    Module.put_attribute(module, :delimited_declarations, {:embed, kind, name, schema, opts})
+  end
+
+  @doc false
+  @spec __shape__(module(), [tuple()], Dialect.t()) :: [Embed.element()]
+  def __shape__(module, declarations, %Dialect{} = dialect) do
+    declarations
+    |> Enum.reverse()
+    |> Enum.map(fn
+      {:field, field} ->
+        {:field, field}
+
+      {:embed, kind, name, schema, opts} ->
+        Embed.expand!(module, kind, name, schema, opts, dialect)
+    end)
+  end
+
+  @doc false
+  @spec __struct_keys__([Embed.element()]) :: keyword()
+  def __struct_keys__(shape) do
+    Enum.map(shape, fn
+      {:field, field} -> {field.name, field.default}
+      {:one, name, _schema, _required?, _children} -> {name, nil}
+      {:many, name, _schema, _required?, _groups} -> {name, []}
+    end)
+  end
+
+  @doc false
+  @spec __fields__(module(), [Embed.element()], Dialect.t()) :: [Field.t()]
+  def __fields__(module, shape, %Dialect{} = dialect) do
+    fields = Embed.flatten(shape)
 
     if fields == [] do
       raise ArgumentError,
@@ -139,10 +273,34 @@ defmodule Delimited.Schema do
               "neither read nor write a row. Declare at least one field."
     end
 
-    check_unique!(module, fields, & &1.name, "field")
-    check_unique!(module, fields, & &1.header, "header")
+    check_names!(module, shape)
+    check_headers!(module, fields, dialect)
     check_layout!(module, fields, dialect)
     fields
+  end
+
+  # Names have to be unique among the keys of one struct, not across the file:
+  # two embedded copies of the same schema both hold a :street, and they are
+  # different structs. An embedded schema checked its own names when it
+  # compiled, so only this level is checked here.
+  defp check_names!(module, shape) do
+    names =
+      Enum.map(shape, fn
+        {:field, field} -> field.name
+        {:one, name, _schema, _required?, _children} -> name
+        {:many, name, _schema, _required?, _groups} -> name
+      end)
+
+    check_unique!(module, names, & &1, "name")
+  end
+
+  # Under the fixed layout a column is identified by where it starts, and two
+  # embedded copies of one schema necessarily repeat its headers. Positions are
+  # checked for overlap instead.
+  defp check_headers!(_module, _fields, %{layout: :fixed}), do: :ok
+
+  defp check_headers!(module, fields, _dialect) do
+    check_unique!(module, fields, & &1.header, "header")
   end
 
   defp check_layout!(module, fields, %{layout: :fixed} = dialect) do
@@ -204,9 +362,19 @@ defmodule Delimited.Schema do
     end
   end
 
-  defp check_unique!(module, fields, key, label) do
+  @explanations %{
+    "name" =>
+      "A field's or an embed's name is a key of this schema's struct, so two of " <>
+        "them cannot share one. Two embeds of the same schema may each hold a " <>
+        "field of that name, because they are different structs.",
+    "header" =>
+      "Two fields reading the same column, or two columns with the same name, " <>
+        "cannot both be honoured."
+  }
+
+  defp check_unique!(module, values, key, label) do
     duplicates =
-      fields
+      values
       |> Enum.group_by(key)
       |> Enum.filter(fn {_value, group} -> length(group) > 1 end)
       |> Enum.map(fn {value, _group} -> value end)
@@ -214,8 +382,7 @@ defmodule Delimited.Schema do
     if duplicates != [] do
       raise ArgumentError,
             "#{inspect(module)} declares the #{label} #{inspect(hd(duplicates))} more " <>
-              "than once. Two fields reading the same column, or two columns with the " <>
-              "same name, cannot both be honoured."
+              "than once. #{Map.fetch!(@explanations, label)}"
     end
   end
 

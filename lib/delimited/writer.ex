@@ -17,6 +17,7 @@ defmodule Delimited.Writer do
   # values from the same fields, so only the last step differs.
 
   alias Delimited.Dialect
+  alias Delimited.Embed
   alias Delimited.Encoder
   alias Delimited.Error
   alias Delimited.Field
@@ -57,10 +58,11 @@ defmodule Delimited.Writer do
   @doc """
   Encodes one row. `line` is the line the row occupies in the output.
   """
-  @spec row(module(), [Field.t()], term(), pos_integer(), Dialect.t()) ::
+  @spec row(module(), [Embed.element()], term(), pos_integer(), Dialect.t()) ::
           {:ok, iodata()} | {:error, Error.t()}
-  def row(schema, fields, row, line, %Dialect{layout: :fixed} = dialect) when is_map(row) do
-    with {:ok, cells} <- placements(schema, fields, row, line, dialect),
+  def row(schema, shape, row, line, %Dialect{layout: :fixed} = dialect) when is_map(row) do
+    with {:ok, values} <- Embed.values(shape, row),
+         {:ok, cells} <- placements(values, dialect),
          {:ok, record} <- record(cells, dialect) do
       {:ok, record}
     else
@@ -68,21 +70,16 @@ defmodule Delimited.Writer do
     end
   end
 
-  def row(schema, fields, row, line, %Dialect{} = dialect) when is_map(row) do
-    fields
-    |> Enum.reduce_while([], fn field, cells ->
-      case cell(field, row, dialect) do
-        {:ok, cell} -> {:cont, [cell | cells]}
-        {:error, error} -> {:halt, locate(error, schema, field, line)}
-      end
-    end)
-    |> case do
-      %Error{} = error -> {:error, error}
-      cells -> {:ok, Encoder.row(Enum.reverse(cells), dialect)}
+  def row(schema, shape, row, line, %Dialect{} = dialect) when is_map(row) do
+    with {:ok, values} <- Embed.values(shape, row),
+         {:ok, cells} <- cells(values, dialect) do
+      {:ok, Encoder.row(cells, dialect)}
+    else
+      {:error, %Error{} = error} -> {:error, %{error | schema: schema, line: line}}
     end
   end
 
-  def row(schema, _fields, row, line, _dialect) do
+  def row(schema, _shape, row, line, _dialect) do
     error =
       Error.new(:dump_failed,
         schema: schema,
@@ -94,32 +91,38 @@ defmodule Delimited.Writer do
     {:error, error}
   end
 
-  defp placements(schema, fields, row, line, dialect) do
-    fields
-    |> Enum.reduce_while([], fn field, cells ->
-      case cell(field, row, dialect) do
-        {:ok, cell} ->
-          {:cont, [placement(field, IO.iodata_to_binary(cell), row) | cells]}
+  defp cells(values, dialect) do
+    reduce_cells(values, dialect, fn _field, _value, cell -> cell end)
+  end
 
-        {:error, error} ->
-          {:halt, locate(error, schema, field, line)}
+  defp placements(values, dialect) do
+    reduce_cells(values, dialect, fn field, value, cell ->
+      placement(field, IO.iodata_to_binary(cell), value)
+    end)
+  end
+
+  defp reduce_cells(values, dialect, wrap) do
+    values
+    |> Enum.reduce_while([], fn {field, value}, cells ->
+      case dump(field, value, dialect) do
+        {:ok, cell} -> {:cont, [wrap.(field, value, cell) | cells]}
+        {:error, error} -> {:halt, %{error | field: field.name}}
       end
     end)
     |> case do
       %Error{} = error -> {:error, error}
-      cells -> {:ok, cells}
+      cells -> {:ok, Enum.reverse(cells)}
     end
   end
 
   # A field with no value is left blank rather than filled with its pad byte.
   # Padding is for values; filling an empty numeric field with zeros would state
   # a number the row never held, and the reader would believe it.
-  defp placement(%Field{} = field, text, row) do
-    case Map.get(row, field.name) do
-      nil -> {field, text, Field.alignment(field), @filler}
-      _value -> {field, text, Field.alignment(field), Field.padding(field)}
-    end
-  end
+  defp placement(%Field{} = field, text, nil),
+    do: {field, text, Field.alignment(field), @filler}
+
+  defp placement(%Field{} = field, text, _value),
+    do: {field, text, Field.alignment(field), Field.padding(field)}
 
   # Fields are placed in position order rather than declaration order, so that
   # a schema may declare them in whatever order reads best.
@@ -177,28 +180,16 @@ defmodule Delimited.Writer do
   defp terminator(%{record_length: :line, newline: newline}), do: newline
   defp terminator(_dialect), do: []
 
-  defp cell(%Field{} = field, row, dialect) do
-    case Map.fetch(row, field.name) do
-      {:ok, nil} -> {:ok, null(field, dialect)}
-      {:ok, value} -> dump(field, value)
-      :error -> {:error, missing_key(field)}
-    end
-  end
+  defp dump(%Field{} = field, nil, dialect), do: {:ok, null(field, dialect)}
 
-  defp dump(%Field{} = field, value) do
+  defp dump(%Field{} = field, value, _dialect) do
     case Type.dump(field.type, value, field.opts) do
       {:ok, cell} -> {:ok, cell}
       {:error, expected} -> {:error, Error.new(:dump_failed, value: value, detail: expected)}
     end
   end
 
-  defp missing_key(%Field{} = field), do: Error.new(:missing_value, field: field.name)
-
   defp null(%Field{null: [first | _rest]}, _dialect), do: first
   defp null(_field, %{null: [first | _rest]}), do: first
   defp null(_field, _dialect), do: ""
-
-  defp locate(error, schema, field, line) do
-    %{error | schema: schema, field: field.name, line: line}
-  end
 end

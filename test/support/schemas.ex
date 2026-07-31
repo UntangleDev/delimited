@@ -105,6 +105,68 @@ defmodule Delimited.Test.Padded do
   end
 end
 
+defmodule Delimited.Test.Address do
+  @moduledoc false
+
+  use Delimited.Schema
+
+  delimited_schema do
+    field :street, :string
+    field :city, :string
+  end
+end
+
+defmodule Delimited.Test.LineItem do
+  @moduledoc false
+
+  use Delimited.Schema
+
+  delimited_schema do
+    field :sku, :string
+    field :qty, :integer
+  end
+end
+
+defmodule Delimited.Test.Order do
+  @moduledoc false
+  # The same schema embedded twice under different names, and a third embedded
+  # a fixed number of times.
+
+  use Delimited.Schema
+
+  delimited_schema do
+    field :id, :integer
+    embeds_one :billing, Delimited.Test.Address, prefix: "billing_"
+    embeds_one :shipping, Delimited.Test.Address, prefix: "shipping_"
+    embeds_many :lines, Delimited.Test.LineItem, count: 2, prefix: "item_{n}_"
+  end
+end
+
+defmodule Delimited.Test.Party do
+  @moduledoc false
+
+  use Delimited.Schema
+
+  delimited_schema :fixed do
+    field :sort_code, :string, at: 1..6
+    field :account, :string, at: 7..14
+  end
+end
+
+defmodule Delimited.Test.Transfer do
+  @moduledoc false
+  # A fixed-width record holding the same 14-byte block twice, declared once.
+
+  use Delimited.Schema
+
+  delimited_schema :fixed do
+    field :record_type, :string, at: 1..1
+    embeds_one :payer, Delimited.Test.Party, at: 2
+    embeds_one :payee, Delimited.Test.Party, at: 16
+    field :amount, :integer, at: 30..37, pad: ?0
+  end
+end
+
 defmodule Delimited.Test.Reading do
   @moduledoc false
   # One field of each built-in type, for exercising casting and dumping through
