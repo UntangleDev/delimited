@@ -58,9 +58,23 @@ defmodule Delimited.Encoder do
     end
   end
 
-  defp needs_quoting?(text, dialect) do
-    :binary.match(text, [<<dialect.delimiter>>, <<dialect.quote_char>>, "\n", "\r"]) != :nomatch
-  end
+  # Four single bytes decide this. `:binary.match/2` given a list of them
+  # compiles a pattern on each call, which costs about thirty times the scan
+  # itself and made `quoting: :always` faster than the default — see
+  # bench/write.exs. The parser avoids that by compiling its patterns once in
+  # `Delimited.Parser.new/1`, which is not available here: a schema's dialect is
+  # a compile-time literal and a compiled pattern holds a reference, which
+  # cannot be one. Scanning by hand needs nothing compiled and comes within a
+  # fifth of a reused compiled pattern.
+  defp needs_quoting?(text, %{delimiter: delimiter, quote_char: quote_char}),
+    do: scan(text, delimiter, quote_char)
+
+  defp scan(<<>>, _delimiter, _quote_char), do: false
+  defp scan(<<byte, _rest::binary>>, byte, _quote_char), do: true
+  defp scan(<<byte, _rest::binary>>, _delimiter, byte), do: true
+  defp scan(<<?\n, _rest::binary>>, _delimiter, _quote_char), do: true
+  defp scan(<<?\r, _rest::binary>>, _delimiter, _quote_char), do: true
+  defp scan(<<_byte, rest::binary>>, delimiter, quote_char), do: scan(rest, delimiter, quote_char)
 
   defp enclose(text, dialect) do
     quote_char = <<dialect.quote_char>>
