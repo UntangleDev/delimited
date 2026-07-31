@@ -50,10 +50,15 @@ for the `:decimal` type.
 def deps do
   [
     {:delimited, "~> 0.1"},
-    {:decimal, "~> 2.0"}
+    {:decimal, "~> 3.0"}
   ]
 end
 ```
+
+`:decimal` is optional and needed only for the `:decimal` type. Any 2.x or 3.x
+version works. Prefer 3.x when the files come from anywhere you do not trust:
+it refuses an absurd number such as `1e1000000000` as it reads it, where 2.x
+accepts one and renders it in full on the way back out. See `Delimited.Type`.
 
 ## Reading
 
