@@ -4,6 +4,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.3.0
+
 ### Embedded schemas
 
 - Add `embeds_one/3` and `embeds_many/3`, so that a group of columns a file
@@ -27,8 +29,12 @@ This project follows [Semantic Versioning](https://semver.org/).
   declared with the other layout, a repeated group with no `:count` or an
   unnumbered prefix, and two embeds claiming the same columns are all build
   failures.
-- Field and embed names must now be unique within one schema rather than across
-  the whole file, so two embeds of the same schema may each hold a `:street`.
+- Field and embed names are now unique within one schema rather than across the
+  whole file, so two embeds of the same schema may each hold a `:street`.
+  Headers stay unique across the file, except under the fixed layout, where a
+  column is identified by where it starts and repeated blocks necessarily repeat
+  their names. Both are relaxations: every schema that compiled under 0.2.0
+  still compiles and reads the same file.
 
 ## 0.2.0
 

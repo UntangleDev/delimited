@@ -24,3 +24,6 @@ erl_crash.dump
 
 # `mix hex.build` writes package archives with this prefix.
 delimited-*.tar
+README.md
+
+.elixir_ls/
