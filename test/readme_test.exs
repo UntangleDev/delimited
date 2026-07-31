@@ -59,6 +59,21 @@ defmodule Delimited.ReadmeTest do
     end
   end
 
+  defmodule Payment do
+    @moduledoc false
+
+    use Delimited.Schema
+
+    delimited_schema :fixed do
+      field :record_type, :string, at: 1..1
+      field :account, :string, at: 2..9
+      # positions 10 and 11 are filler, so no field declares them
+      field :amount, :integer, at: 12..19, pad: ?0
+      field :name, :string, at: 20..37
+      field :active, {:enum, [true: "1", false: "0"]}, at: 38..38
+    end
+  end
+
   @csv """
   Employee ID,name,department,Hire Date,salary,active
   1,"Lovelace, Ada",ENG,1843-01-01,1200.50,true
@@ -117,5 +132,45 @@ defmodule Delimited.ReadmeTest do
     csv = "Employee ID,name,department,Hire Date,salary,active,notes\n1,A,ENG,,,,x\n"
 
     assert {:ok, [%Employee{name: "A"}]} = Delimited.decode(Employee, csv)
+  end
+
+  describe "the fixed-width example" do
+    test "reads the positions the comments claim" do
+      record = "6" <> "12345678" <> "  " <> "00001234" <> "Lovelace, Ada     " <> "1"
+
+      assert {:ok, [payment]} = Delimited.decode(Payment, record <> "\n")
+
+      assert payment == %Payment{
+               record_type: "6",
+               account: "12345678",
+               amount: 1234,
+               name: "Lovelace, Ada",
+               active: true
+             }
+    end
+
+    test "reads blank, zero, and a number as the table says" do
+      for {bytes, expected} <- [{"00001234", 1234}, {"00000000", 0}, {"        ", nil}] do
+        record = "6" <> "12345678" <> "  " <> bytes <> "Name              " <> "1"
+
+        assert {:ok, [%Payment{amount: ^expected}]} = Delimited.decode(Payment, record <> "\n")
+      end
+    end
+
+    test "writes nil blank, so that it survives a round trip" do
+      rows = [%Payment{record_type: "6", amount: nil}, %Payment{record_type: "6", amount: 0}]
+
+      written = Payment |> Delimited.encode!(rows) |> Enum.to_list() |> IO.iodata_to_binary()
+
+      assert binary_part(written, 11, 8) == "        "
+      assert Delimited.decode!(Payment, written) == rows
+    end
+
+    test "reports a field whose bytes are not valid UTF-8" do
+      record = "6" <> "1234567é" <> "  " <> "00001234" <> "Name              " <> "1"
+
+      assert {:error, [%Delimited.Error{reason: :invalid_encoding} | _rest]} =
+               Delimited.decode(Payment, record <> "\n")
+    end
   end
 end

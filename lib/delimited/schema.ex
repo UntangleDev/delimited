@@ -85,8 +85,14 @@ defmodule Delimited.Schema do
         :ok
       end
 
-      @delimited_field_list Delimited.Schema.__fields__(__MODULE__, @delimited_fields)
+      # The dialect is built first because the layout decides which field
+      # options are required and which are meaningless.
       @delimited_dialect Delimited.Dialect.new!(unquote(format), unquote(opts))
+      @delimited_field_list Delimited.Schema.__fields__(
+                              __MODULE__,
+                              @delimited_fields,
+                              @delimited_dialect
+                            )
 
       defstruct Enum.map(@delimited_field_list, &{&1.name, &1.default})
 
@@ -123,8 +129,8 @@ defmodule Delimited.Schema do
   end
 
   @doc false
-  @spec __fields__(module(), [Field.t()]) :: [Field.t()]
-  def __fields__(module, accumulated) do
+  @spec __fields__(module(), [Field.t()], Dialect.t()) :: [Field.t()]
+  def __fields__(module, accumulated, %Dialect{} = dialect) do
     fields = Enum.reverse(accumulated)
 
     if fields == [] do
@@ -135,7 +141,67 @@ defmodule Delimited.Schema do
 
     check_unique!(module, fields, & &1.name, "field")
     check_unique!(module, fields, & &1.header, "header")
+    check_layout!(module, fields, dialect)
     fields
+  end
+
+  defp check_layout!(module, fields, %{layout: :fixed} = dialect) do
+    Enum.each(fields, fn field ->
+      if is_nil(field.at) do
+        raise ArgumentError,
+              "field #{inspect(field.name)} of #{inspect(module)} declares no position. " <>
+                "Under `layout: :fixed` a field is a range of bytes, so every field " <>
+                "needs one, written as the file's specification writes it: `at: 8..15`."
+      end
+    end)
+
+    check_overlaps!(module, fields)
+    check_record_length!(module, fields, dialect)
+  end
+
+  defp check_layout!(module, fields, _dialect) do
+    Enum.each(fields, fn field ->
+      case Enum.find([:at, :align, :pad], &(not is_nil(Map.fetch!(field, &1)))) do
+        nil ->
+          :ok
+
+        option ->
+          raise ArgumentError,
+                "field #{inspect(field.name)} of #{inspect(module)} declares " <>
+                  "#{inspect(option)}, which only the fixed-width layout can honour. " <>
+                  "Declare the schema with `:fixed`, or drop the option."
+      end
+    end)
+  end
+
+  defp check_overlaps!(module, fields) do
+    fields
+    |> Enum.sort_by(& &1.at)
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.each(fn [earlier, later] ->
+      if Field.ends_at(earlier) > elem(later.at, 0) do
+        raise ArgumentError,
+              "fields #{inspect(earlier.name)} at #{inspect(Field.declared_at(earlier))} and " <>
+                "#{inspect(later.name)} at #{inspect(Field.declared_at(later))} in " <>
+                "#{inspect(module)} cover some of the same bytes. Two fields cannot both " <>
+                "own a position; check them against the file's specification."
+      end
+    end)
+  end
+
+  defp check_record_length!(_module, _fields, %{record_length: :line}), do: :ok
+
+  defp check_record_length!(module, fields, %{record_length: length}) do
+    last = fields |> Enum.map(&Field.ends_at/1) |> Enum.max()
+
+    if last > length do
+      overrun = Enum.max_by(fields, &Field.ends_at/1)
+
+      raise ArgumentError,
+            "field #{inspect(overrun.name)} of #{inspect(module)} ends at position #{last}, " <>
+              "beyond the declared `record_length: #{length}`. Every record would be too " <>
+              "short to hold it. Correct the position or the record length."
+    end
   end
 
   defp check_unique!(module, fields, key, label) do

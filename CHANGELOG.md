@@ -4,6 +4,28 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Fixed-width layouts
+
+- Add `layout: :fixed`, where a field is a range of bytes rather than a cell.
+  Declare positions 1-based and inclusive, as a file specification writes them:
+  `field :account, :string, at: 8..15`.
+- Add the field options `:at`, `:align`, and `:pad`. Alignment defaults to the
+  right for `:integer`, `:float`, and `:decimal`, and to the left otherwise.
+- Add `record_length: N` for a file with no line terminators, alongside the
+  default `record_length: :line`.
+- Read an all-pad field as its pad value and a blank one as no value, so that
+  `"00000000"` is zero and `"        "` is `nil`. Write `nil` blank whatever the
+  field's pad, so that the two survive a round trip.
+- Refuse, rather than guess at, a record that ends before a declared field
+  (`:record_too_short`), a field whose bytes are not valid UTF-8
+  (`:invalid_encoding`), and a value wider than the field that must hold it
+  (`:value_too_wide`).
+- Check positions when the schema is compiled: a field with no position, two
+  fields covering the same bytes, a field beyond the declared record length, and
+  a position declared on a delimited schema are all build failures.
+- Reverse the documented refusal of fixed-width files in `README.md` and
+  `AGENTS.md`.
+
 ## 0.1.0
 
 - Add `Delimited.Schema`, declaring the columns of a delimited file as a struct

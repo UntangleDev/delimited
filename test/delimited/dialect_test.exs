@@ -69,6 +69,34 @@ defmodule Delimited.DialectTest do
     end
   end
 
+  describe "layouts" do
+    test "defaults to the delimited layout framed by lines" do
+      assert %Dialect{layout: :delimited, record_length: :line} = Dialect.new!()
+    end
+
+    test "the fixed format selects the layout and turns headers off" do
+      assert %Dialect{layout: :fixed, headers: false} = Dialect.new!(:fixed)
+    end
+
+    test "takes a record length for a file with no terminators" do
+      assert Dialect.new!(:fixed, record_length: 100).record_length == 100
+    end
+
+    test "refuses a record length that is neither :line nor a positive integer" do
+      for bad <- [0, -1, "100", :fixed] do
+        assert_raise ArgumentError, ~r/must be :line, or a positive integer/, fn ->
+          Dialect.new!(record_length: bad)
+        end
+      end
+    end
+
+    test "refuses an unknown layout" do
+      assert_raise ArgumentError, ~r/must be one of \[:delimited, :fixed\]/, fn ->
+        Dialect.new!(layout: :columnar)
+      end
+    end
+  end
+
   describe "merge!/2" do
     test "applies options over a dialect" do
       assert Dialect.new!(:tsv) |> Dialect.merge!(headers: false) |> Map.get(:headers) == false
@@ -80,6 +108,18 @@ defmodule Delimited.DialectTest do
 
     test "keeps the rest of the dialect when applying a format" do
       assert Dialect.new!(headers: false) |> Dialect.merge!(:tsv) |> Map.get(:headers) == false
+    end
+
+    test "a format applies only the options it names" do
+      # :tsv says nothing about null strings, so it leaves them alone.
+      dialect = Dialect.new!(null: ["N/A"]) |> Dialect.merge!(:tsv)
+
+      assert dialect.null == ["N/A"]
+      assert dialect.delimiter == ?\t
+    end
+
+    test "returns a fixed dialect to the delimited layout" do
+      assert Dialect.new!(:fixed) |> Dialect.merge!(:csv) |> Map.get(:layout) == :delimited
     end
   end
 end

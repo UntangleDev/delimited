@@ -23,15 +23,45 @@ defmodule Delimited.Dialect do
   the registration does not describe only when a value contains a tab, a quote,
   or a line break.
 
+  `:fixed` selects the fixed-width layout and turns `:headers` off, since a
+  fixed-width file rarely carries a header row.
+
+  A format applies exactly the options it names and leaves every other option as
+  it found it, so `merge!(dialect, :tsv)` changes the delimiter without
+  disturbing the null strings.
+
+  ## Layouts
+
+  `layout: :delimited` (the default) finds a cell between two delimiters.
+  `layout: :fixed` takes a cell from the byte range each field declares with
+  `:at`, and the delimiter and quote character are then unused. See
+  `Delimited.Field` for declaring positions.
+
+  The layout also decides how records are framed:
+
+    * `record_length: :line` (the default) frames a record as a line, however
+      long the line is.
+    * `record_length: N` frames a record as exactly N bytes, for a file with no
+      line terminators at all. A file that has terminators is framed by its
+      lines whatever its record length, so there is never a question of whether
+      a terminator is part of the record or between two of them.
+
   ## Options
 
   Reading and writing:
 
+    * `:layout` - `:delimited` (default) or `:fixed`.
+    * `:record_length` - `:line` (default) or a positive integer. Fixed layout
+      only.
     * `:delimiter` - the byte between cells, as a one-character string or a
-      codepoint. Defaults to `?,`.
-    * `:quote_char` - the byte that quotes a cell. Defaults to `?"`.
-    * `:headers` - whether the file has a header row. When `false`, columns are
-      matched by declaration order. Defaults to `true`.
+      codepoint. Defaults to `?,`. Delimited layout only.
+    * `:quote_char` - the byte that quotes a cell. Defaults to `?"`. Delimited
+      layout only.
+    * `:headers` - whether the file has a header row. Under the delimited
+      layout, `false` matches columns by declaration order. Under the fixed
+      layout, positions always decide, so `true` only means that the first
+      record is a header line to skip when reading and to write when writing.
+      Defaults to `true`, and to `false` under the `:fixed` format.
     * `:trim` - strip surrounding whitespace from every cell. Defaults to
       `false`, so that a value is read exactly as the file holds it. Overridable
       per field.
@@ -89,6 +119,8 @@ defmodule Delimited.Dialect do
 
   defstruct delimiter: @default_delimiter,
             quote_char: @default_quote,
+            layout: :delimited,
+            record_length: :line,
             newline: "\n",
             headers: true,
             skip_rows: 0,
@@ -105,6 +137,8 @@ defmodule Delimited.Dialect do
   @type t :: %__MODULE__{
           delimiter: byte(),
           quote_char: byte(),
+          layout: :delimited | :fixed,
+          record_length: :line | pos_integer(),
           newline: String.t(),
           headers: boolean(),
           skip_rows: non_neg_integer(),
@@ -119,18 +153,26 @@ defmodule Delimited.Dialect do
           chunk_size: pos_integer()
         }
 
-  @formats [csv: @default_delimiter, tsv: ?\t]
+  # A format is a set of options, not only a delimiter, so that a name can carry
+  # everything that distinguishes one shape of file from another. A format
+  # applies exactly the options listed here and leaves every other option as it
+  # found it.
+  @formats [
+    csv: [layout: :delimited, delimiter: @default_delimiter],
+    tsv: [layout: :delimited, delimiter: ?\t],
+    fixed: [layout: :fixed, headers: false]
+  ]
 
   @doc """
   Builds a dialect from a format name, a keyword list of options, or both.
 
   Raises `ArgumentError` for an unknown format, an unknown option, or an option
-  the parser cannot honour. A dialect is programmer-owned configuration rather
+  the reader cannot honour. A dialect is programmer-owned configuration rather
   than data read from a file, so a mistake in one is a mistake in the program.
 
       Delimited.Dialect.new!(:tsv)
       Delimited.Dialect.new!(delimiter: ";", newline: "\\r\\n")
-      Delimited.Dialect.new!(:tsv, headers: false)
+      Delimited.Dialect.new!(:fixed, record_length: 100)
   """
   @spec new!(atom() | keyword()) :: t()
   @spec new!(atom() | keyword(), keyword()) :: t()
@@ -139,10 +181,7 @@ defmodule Delimited.Dialect do
   def new!(opts) when is_list(opts), do: new!(:csv, opts)
 
   def new!(format, opts) when is_atom(format) and is_list(opts) do
-    case Keyword.fetch(@formats, format) do
-      {:ok, delimiter} -> merge!(%__MODULE__{delimiter: delimiter}, opts)
-      :error -> raise ArgumentError, "unknown format #{inspect(format)}. #{formats()}"
-    end
+    merge!(%__MODULE__{}, format_options!(format) ++ opts)
   end
 
   def new!(opts, more) when is_list(opts) and is_list(more),
@@ -151,16 +190,17 @@ defmodule Delimited.Dialect do
   @doc """
   Applies call-site options, or a format name, to an existing dialect.
 
+  A format name applies that format's options over the dialect and leaves the
+  rest of it alone, so `merge!(dialect, :tsv)` changes the delimiter without
+  disturbing the null strings.
+
   Raises `ArgumentError` on an unknown format, or an unknown or invalid option.
   """
   @spec merge!(t(), keyword() | atom()) :: t()
   def merge!(%__MODULE__{} = dialect, []), do: dialect
 
   def merge!(%__MODULE__{} = dialect, format) when is_atom(format) do
-    case Keyword.fetch(@formats, format) do
-      {:ok, delimiter} -> validate_bytes!(%{dialect | delimiter: delimiter})
-      :error -> raise ArgumentError, "unknown format #{inspect(format)}. #{formats()}"
-    end
+    merge!(dialect, format_options!(format))
   end
 
   def merge!(%__MODULE__{} = dialect, opts) when is_list(opts) do
@@ -168,6 +208,12 @@ defmodule Delimited.Dialect do
     |> Enum.reduce(dialect, fn {key, value}, acc -> put(acc, key, value) end)
     |> validate_bytes!()
   end
+
+  defp put(dialect, :layout, value),
+    do: %{dialect | layout: one_of!(:layout, value, [:delimited, :fixed])}
+
+  defp put(dialect, :record_length, value),
+    do: %{dialect | record_length: record_length!(value)}
 
   defp put(dialect, :delimiter, value), do: %{dialect | delimiter: byte!(:delimiter, value)}
   defp put(dialect, :quote_char, value), do: %{dialect | quote_char: byte!(:quote_char, value)}
@@ -223,6 +269,15 @@ defmodule Delimited.Dialect do
             "A multi-byte or multi-character separator is not supported."
   end
 
+  defp record_length!(:line), do: :line
+  defp record_length!(value) when is_integer(value) and value > 0, do: value
+
+  defp record_length!(value) do
+    raise ArgumentError,
+          "the :record_length must be :line, or a positive integer for a file with no " <>
+            "line terminators, got: #{inspect(value)}"
+  end
+
   defp boolean!(_key, value) when is_boolean(value), do: value
 
   defp boolean!(key, value),
@@ -261,6 +316,13 @@ defmodule Delimited.Dialect do
     else
       raise ArgumentError,
             "the #{inspect(key)} must be one of #{inspect(allowed)}, got: #{inspect(value)}"
+    end
+  end
+
+  defp format_options!(format) do
+    case Keyword.fetch(@formats, format) do
+      {:ok, options} -> options
+      :error -> raise ArgumentError, "unknown format #{inspect(format)}. #{formats()}"
     end
   end
 

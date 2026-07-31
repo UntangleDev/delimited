@@ -1,19 +1,26 @@
 defmodule Delimited.Reader do
   @moduledoc false
 
-  # Turns the parser's rows into schema structs.
+  # Turns framed rows into schema structs.
   #
-  # Three things happen here that the parser cannot know about: rows are
-  # skipped, the header row is matched against the declared fields, and each
-  # cell is cast. The header row is matched once and the resulting column
-  # indices are reused for every later row.
+  # Three things happen here that a framer cannot know about: rows are skipped,
+  # the header row is matched against the declared fields, and each cell is
+  # cast. The header row is matched once and the resulting column indices are
+  # reused for every later row.
   #
   # A malformed cell fails one row. A malformed header fails the file, because
   # every row after it would be read from the wrong column.
+  #
+  # Both layouts meet here. Where they differ is what a row carries and how a
+  # field finds its text in it: the delimited layout produces cells and a field
+  # holds a cell index, the fixed layout produces the record's bytes and a field
+  # holds a byte range. The two are told apart by whether the row's payload is a
+  # binary, and by nothing else.
 
   alias Delimited.Dialect
   alias Delimited.Error
   alias Delimited.Field
+  alias Delimited.Fixed
   alias Delimited.Parser
   alias Delimited.Type
 
@@ -24,15 +31,35 @@ defmodule Delimited.Reader do
     fields = schema.__delimited__(:fields)
 
     chunks
-    |> Parser.stream(dialect)
+    |> frame(dialect)
     |> Stream.concat([:end_of_input])
     |> Stream.transform(initial(fields, dialect), &step(&1, &2, schema, fields, dialect))
   end
 
-  defp initial(_fields, %{skip_rows: rows}) when rows > 0, do: {:skip, rows}
-  defp initial(_fields, %{headers: true}), do: :header
+  defp frame(chunks, %{layout: :fixed} = dialect), do: Fixed.stream(chunks, dialect)
+  defp frame(chunks, dialect), do: Parser.stream(chunks, dialect)
 
-  defp initial(fields, _dialect) do
+  defp initial(fields, dialect) do
+    case skip_count(dialect) do
+      0 -> reading(fields, dialect)
+      count -> {:skip, count}
+    end
+  end
+
+  # Under the fixed layout a header row cannot decide anything, because
+  # positions already have. It is one more row to drop.
+  defp skip_count(%{layout: :fixed, headers: true, skip_rows: rows}), do: rows + 1
+  defp skip_count(%{skip_rows: rows}), do: rows
+
+  # The third element is the extent a row must have: a cell count for the
+  # delimited layout, a byte count for the fixed one.
+  defp reading(fields, %{layout: :fixed}) do
+    {:rows, Enum.map(fields, &{&1, &1.at}), fields |> Enum.map(&Field.ends_at/1) |> Enum.max()}
+  end
+
+  defp reading(_fields, %{headers: true}), do: :header
+
+  defp reading(fields, _dialect) do
     {:rows, Enum.with_index(fields), length(fields)}
   end
 
@@ -47,7 +74,7 @@ defmodule Delimited.Reader do
   defp step(:end_of_input, state, _schema, _fields, _dialect), do: {:halt, state}
 
   defp step({:ok, _row}, {:skip, 1}, _schema, fields, dialect) do
-    {[], initial(fields, %{dialect | skip_rows: 0})}
+    {[], reading(fields, dialect)}
   end
 
   defp step({:ok, _row}, {:skip, remaining}, _schema, _fields, _dialect) do
@@ -131,6 +158,26 @@ defmodule Delimited.Reader do
     |> Enum.map(fn {_candidate, index} -> index end)
   end
 
+  # A fixed-width record may hold more bytes than the schema declares: those are
+  # filler, ignored the way an undeclared extra column is. It may not hold
+  # fewer, because then a declared field is simply not there.
+  defp cast_row(schema, mapping, minimum, {line, record}, dialect) when is_binary(record) do
+    case byte_size(record) do
+      size when size >= minimum ->
+        cast_cells(schema, mapping, line, record, dialect)
+
+      size ->
+        {:error,
+         [
+           Error.new(:record_too_short,
+             schema: schema,
+             line: line,
+             detail: {minimum, size}
+           )
+         ]}
+    end
+  end
+
   defp cast_row(schema, mapping, expected, {line, cells}, dialect) do
     case length(cells) do
       ^expected -> cast_cells(schema, mapping, line, List.to_tuple(cells), dialect)
@@ -156,10 +203,27 @@ defmodule Delimited.Reader do
     end
   end
 
-  defp cast_cell(%Field{} = field, nil, _cells, _dialect), do: absent(field)
+  defp cast_cell(%Field{} = field, nil, _row, _dialect), do: absent(field)
+
+  defp cast_cell(%Field{} = field, {offset, length}, record, dialect) do
+    text = binary_part(record, offset, length)
+
+    # Slicing by byte can cut a multi-byte character in half, which is what
+    # positions counted in characters rather than bytes produce. Refusing the
+    # cell reports that; casting the fragments would not.
+    if String.valid?(text) do
+      text |> unpad(field) |> read(field, dialect)
+    else
+      {:error, Error.new(:invalid_encoding, value: text)}
+    end
+  end
 
   defp cast_cell(%Field{} = field, index, cells, dialect) do
-    text = cells |> elem(index) |> trim(trim?(field, dialect))
+    cells |> elem(index) |> read(field, dialect)
+  end
+
+  defp read(text, %Field{} = field, dialect) do
+    text = trim(text, trim?(field, dialect))
 
     if text in nulls(field, dialect) do
       absent(field)
@@ -171,8 +235,38 @@ defmodule Delimited.Reader do
     end
   end
 
+  defp unpad(text, %Field{} = field) do
+    pad = <<Field.padding(field)>>
+
+    case {strip_padding(text, pad, Field.alignment(field)), pad} do
+      # A pad byte that is not a space is a byte a value could be made of, so an
+      # all-pad field keeps one of them: "00000000" in a zero-padded numeric
+      # field states zero, and reading it as no value at all would be wrong in a
+      # way nothing downstream could detect.
+      {"", " "} -> ""
+      {"", pad} -> pad
+      {stripped, " "} -> stripped
+      # The same field left blank says the opposite. A file that fills a numeric
+      # field with digits when it has a number leaves it blank when it has none,
+      # so spaces where digits were expected mean absent, not zero.
+      {stripped, _pad} -> if spaces_only?(stripped), do: "", else: stripped
+    end
+  end
+
+  defp spaces_only?(text), do: String.trim(text, " ") == ""
+
+  defp strip_padding(text, pad, :left), do: String.trim_trailing(text, pad)
+  defp strip_padding(text, pad, :right), do: String.trim_leading(text, pad)
+
   defp absent(%Field{required: true}), do: {:error, Error.new(:required_field_missing)}
   defp absent(%Field{default: default}), do: {:ok, default}
+
+  # A column is the cell's number under the delimited layout and the field's
+  # first byte position under the fixed one. Both are what a reader would count
+  # to on the line in front of them.
+  defp locate(error, schema, field, line, {offset, _length}) do
+    %{error | schema: schema, field: field.name, line: line, column: offset + 1}
+  end
 
   defp locate(error, schema, field, line, index) do
     %{error | schema: schema, field: field.name, line: line, column: index && index + 1}

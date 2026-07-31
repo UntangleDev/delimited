@@ -1,7 +1,7 @@
 # Project
 
-Delimited reads and writes CSV, TSV, and other delimited files through a schema
-declared as a struct, in the manner of `Ecto.Schema`. The schema declares
+Delimited reads and writes CSV, TSV, fixed-width, and other flat files through a
+schema declared as a struct, in the manner of `Ecto.Schema`. The schema declares
 columns; `Delimited` performs the operations.
 
 Supported environment: Elixir 1.15 or later. No runtime dependencies. `:decimal`
@@ -14,11 +14,18 @@ documented at the point a reader would look for the feature, and none of them
 should be relaxed without a decision recorded here.
 
 - A multi-character or non-ASCII delimiter. The parser decides on single bytes.
-- A fixed-width file.
-- A row whose length differs from the header row's.
+- A row whose length differs from the header row's, or a fixed-width record
+  shorter than a declared field.
 - A locale-specific number or date. A custom `Delimited.Type` is the answer.
-- Any encoding other than UTF-8. The parser is byte-oriented, so another
-  encoding passes through into `:string` fields unchanged.
+- Any encoding other than UTF-8. The delimited parser is byte-oriented, so
+  another encoding passes through into `:string` fields unchanged; the fixed
+  layout refuses a field whose bytes are not valid UTF-8, because there the
+  same input means the positions are being counted wrongly.
+- A fixed-width layout in characters rather than bytes.
+
+Fixed-width support was added in 0.2.0 and this list changed with it. A refusal
+removed here must be removed from the README's "What it will not read" in the
+same commit.
 
 ## Decisions worth knowing before changing the code
 
@@ -38,6 +45,18 @@ should be relaxed without a decision recorded here.
   survive with the option.
 - **Writing is the inverse of reading.** A one-column row holding no value is
   written quoted, because an empty line would read back as no row.
+- **A layout decides only how a field finds its text.** `Delimited.Reader` and
+  `Delimited.Writer` take the same values from the same fields either way; the
+  layouts are told apart by whether a row's payload is a binary, and by nothing
+  else. Adding a third layout should not need a change anywhere else.
+- **In a fixed-width field, blank and zero-filled mean different things.**
+  `"00000000"` is zero and `"        "` is absent, in both directions. Writing
+  `nil` as the pad byte would state a number the row never held; reading an
+  all-pad field as `nil` would lose a stated zero. Both halves of that rule are
+  load-bearing and are covered by a round-trip property.
+- **Positions are byte offsets.** These formats are ASCII. A field whose bytes
+  are not valid UTF-8 is refused rather than mangled, because that is what
+  counting characters rather than bytes produces.
 
 ## Sources of truth
 

@@ -13,6 +13,9 @@ defmodule Delimited.ErrorTest do
     {:duplicate_header, [field: :name, header: "name"]},
     {:extra_header, [header: "notes"]},
     {:row_length_mismatch, [line: 4, detail: {6, 2}]},
+    {:record_too_short, [line: 4, detail: {38, 9}]},
+    {:invalid_encoding, [line: 4, column: 2, field: :account, value: <<49, 195>>]},
+    {:value_too_wide, [line: 4, column: 2, field: :account, value: "toolong", detail: {4, 7}]},
     {:cast_failed, [line: 4, column: 3, field: :id, value: "x", detail: "a whole number"]},
     {:required_field_missing, [line: 4, column: 2, field: :name]},
     {:dump_failed, [line: 4, field: :hired_on, value: "today", detail: "a Date"]},
@@ -29,7 +32,7 @@ defmodule Delimited.ErrorTest do
         assert String.length(message) > 40, "#{reason}: message says too little"
 
         assert message =~
-                 ~r/\b(Add|Supply|Correct|Repair|Rename|Declare|Close|Write|Check|Keep)\b/,
+                 ~r/\b(Add|Supply|Correct|Repair|Rename|Declare|Close|Write|Check|Keep|Shorten)\b/,
                "#{reason}: message does not state the next action"
       end
     end

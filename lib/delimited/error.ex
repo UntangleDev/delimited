@@ -30,6 +30,11 @@ defmodule Delimited.Error do
       was read with `on_extra_header: :error`.
     * `:row_length_mismatch` - a row holds a different number of cells than the
       header row, or than the schema declares when reading without headers.
+    * `:record_too_short` - a fixed-width record ends before a declared field
+      does. `:detail` holds `{expected, actual}` byte counts.
+    * `:invalid_encoding` - a fixed-width field's bytes are not valid UTF-8,
+      which usually means the positions are counted wrongly or the file is in
+      another encoding.
 
   Values:
 
@@ -37,6 +42,8 @@ defmodule Delimited.Error do
     * `:required_field_missing` - a field declared `required: true` had no value.
     * `:dump_failed` - a value could not be written as the field's type.
     * `:missing_value` - a row being written holds no key for a field.
+    * `:value_too_wide` - a value is wider than the fixed-width field that must
+      hold it. `:detail` holds `{width, actual}` byte counts.
 
   Environment:
 
@@ -51,6 +58,9 @@ defmodule Delimited.Error do
           | :duplicate_header
           | :extra_header
           | :row_length_mismatch
+          | :record_too_short
+          | :invalid_encoding
+          | :value_too_wide
           | :cast_failed
           | :required_field_missing
           | :dump_failed
@@ -130,6 +140,22 @@ defmodule Delimited.Error do
   defp describe(%{reason: :row_length_mismatch, detail: {expected, actual}}) do
     "the row holds #{actual} cells where #{expected} are expected. Repair the " <>
       "row, or check that the dialect's delimiter matches the file."
+  end
+
+  defp describe(%{reason: :record_too_short, detail: {expected, actual}}) do
+    "the record holds #{actual} bytes where #{expected} are expected. Check that " <>
+      "the file is not truncated, and that its record length is the one declared."
+  end
+
+  defp describe(%{reason: :invalid_encoding, value: value}) do
+    "the bytes #{inspect(value, binaries: :as_binaries)} are not valid UTF-8. Check " <>
+      "that the field's declared positions are counted in bytes, and that the file " <>
+      "is UTF-8 rather than another encoding."
+  end
+
+  defp describe(%{reason: :value_too_wide, value: value, detail: {width, actual}}) do
+    "#{inspect(value)} needs #{actual} bytes and the field holds #{width}. Shorten " <>
+      "the value, or widen the field if the file's specification allows it."
   end
 
   defp describe(%{reason: :cast_failed, value: value, detail: expected}) do

@@ -5,8 +5,8 @@
 [![CI](https://github.com/UntangleDev/delimited/actions/workflows/ci.yml/badge.svg)](https://github.com/UntangleDev/delimited/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/UntangleDev/delimited/blob/main/LICENSE)
 
-Declare the shape of a CSV or TSV file once, as a struct, and read and write it
-through that declaration.
+Declare the shape of a CSV, TSV, or fixed-width file once, as a struct, and read
+and write it through that declaration.
 
 ```elixir
 defmodule Employee do
@@ -184,6 +184,82 @@ Use it as `field :salary, Pence`. The error string completes the sentence
 recognise are passed on to the type, so `field :salary, Pence, symbol: "$"`
 reaches `cast/2` as `[symbol: "$"]`.
 
+## Fixed-width files
+
+A file with no delimiters at all — where a field is a range of bytes — is the
+same declaration with positions on it:
+
+```elixir
+defmodule Payment do
+  use Delimited.Schema
+
+  delimited_schema :fixed do
+    field :record_type, :string, at: 1..1
+    field :account, :string, at: 2..9
+    # positions 10 and 11 are filler, so no field declares them
+    field :amount, :integer, at: 12..19, pad: ?0
+    field :name, :string, at: 20..37
+    field :active, {:enum, [true: "1", false: "0"]}, at: 38..38
+  end
+end
+
+Delimited.read(Payment, "payments.txt")
+```
+
+Positions are **1-based and inclusive**, the way a file specification writes
+them: a field documented as "positions 12-19" is `at: 12..19`. Each field
+carries its own, so a position transcribed wrongly affects that field alone
+rather than shifting every field after it, and so a gap needs no declaration.
+
+`:align` and `:pad` say how a value sits in its field. The defaults are what
+specifications almost always mean: numbers to the right, everything else to the
+left, padded with spaces.
+
+### Blank, zero, and the difference between them
+
+The one place fixed-width files bite is an empty field, so it is worth stating
+what this does:
+
+| In the file | `at: 12..19, pad: ?0` reads |
+|---|---|
+| `00001234` | `1234` |
+| `00000000` | `0` |
+| `        ` | `nil` |
+
+An all-zeros field states zero and reads as zero. The same field left blank says
+"no value" and reads as `nil`. Writing does the same in reverse: `nil` is
+written blank whatever the field's `:pad`, because filling an empty field with
+zeros would state a number the row never held. `nil` therefore survives a round
+trip.
+
+### Records with no line terminators
+
+A mainframe extract is often one long byte stream cut every N bytes. Say so:
+
+```elixir
+delimited_schema :fixed, record_length: 100 do
+```
+
+`record_length: N` is only for a file with no terminators. A file that has them
+is framed by its lines whatever its record length, so there is never a question
+of whether a terminator belongs to a record or sits between two of them.
+
+### What a fixed-width schema will not do
+
+* **Positions are byte offsets, not character offsets.** These formats are
+  ASCII, where the two are the same. A field whose bytes are not valid UTF-8 is
+  an `:invalid_encoding` error rather than a silently mangled string, since that
+  is what counting characters instead of bytes produces.
+* **A record shorter than a declared field** is a `:record_too_short` error.
+  Bytes *beyond* the last declared field are filler and are ignored, the same
+  way an undeclared extra column is.
+* **A value wider than its field** is a `:value_too_wide` error when writing.
+  Truncating would produce a file that parses and lies.
+* **Filler is not preserved.** Nothing reads the bytes no field declares, so
+  nothing can write them back; they are written blank.
+* `:boolean` writes `"true"` and `"false"`, so a one-character flag column wants
+  `{:enum, [true: "Y", false: "N"]}`.
+
 ## Dialects
 
 A schema declares the punctuation of the file it was written for, and any call
@@ -200,8 +276,11 @@ Delimited.read(Product, "supplier.csv", delimiter: ",", headers: true)
 `Delimited.Dialect` documents every option. The ones worth knowing before the
 first surprise:
 
+* **`layout` defaults to `:delimited`.** `:fixed` takes each field from the
+  bytes it declares; see above.
 * **`headers` defaults to `true`.** With `headers: false`, columns are matched
-  by declaration order.
+  by declaration order. Under the fixed layout positions always decide, so
+  `headers: true` there only means that the first record is a header line.
 * **A column the file holds and the schema does not declare is ignored.** A
   column the schema declares and the file does not hold is an error, because
   that is the shape a renamed column takes.
@@ -219,7 +298,6 @@ delivered confidently:
 
 * **A multi-character or non-ASCII delimiter.** The parser decides on single
   bytes.
-* **A fixed-width file.** There are no delimiters to find.
 * **A row of a different length to the header row.** A short row is an error,
   not a row padded with `nil`.
 * **A locale-specific number or date.** `1.234,56` and `01/03/2024` cannot be

@@ -1,7 +1,7 @@
 defmodule Delimited do
   @moduledoc """
-  Reads and writes CSV, TSV, and other delimited files through a declared
-  schema.
+  Reads and writes CSV, TSV, fixed-width, and other flat files through a
+  declared schema.
 
       defmodule Employee do
         use Delimited.Schema
@@ -51,10 +51,23 @@ defmodule Delimited do
         {:error, errors} -> Enum.map(errors, &Exception.message/1)
       end
 
+  ## Fixed-width files
+
+  A file with no delimiters is the same declaration with positions on it:
+
+      delimited_schema :fixed do
+        field :account, :string, at: 2..9
+        field :amount, :integer, at: 12..19, pad: ?0
+      end
+
+  Positions are 1-based and inclusive, as a file specification writes them. See
+  `Delimited.Field` for `:at`, `:align`, and `:pad`, and `Delimited.Dialect` for
+  framing a file that has no line terminators at all.
+
   ## Options
 
   Every function accepts the options in `Delimited.Dialect`, or a format name
-  such as `:tsv`, applied on top of what the schema declared.
+  such as `:tsv` or `:fixed`, applied on top of what the schema declared.
 
   Read `Delimited.Dialect` before writing a file that another program will open
   as a spreadsheet. Its `:escape_formulas` note describes an injection that this
@@ -273,7 +286,14 @@ defmodule Delimited do
         end
       end)
 
-    Stream.concat([Writer.prelude(fields, dialect)], encoded)
+    Stream.concat([prelude!(fields, dialect)], encoded)
+  end
+
+  defp prelude!(fields, dialect) do
+    case Writer.prelude(fields, dialect) do
+      {:ok, iodata} -> iodata
+      {:error, error} -> raise error
+    end
   end
 
   @doc """
@@ -306,7 +326,8 @@ defmodule Delimited do
   defp first_row_line(_dialect), do: 1
 
   defp write_rows(device, schema, fields, rows, dialect, path) do
-    with :ok <- binwrite(device, Writer.prelude(fields, dialect), schema, path) do
+    with {:ok, prelude} <- Writer.prelude(fields, dialect),
+         :ok <- binwrite(device, prelude, schema, path) do
       rows
       |> Stream.with_index(first_row_line(dialect))
       |> Enum.reduce_while(:ok, fn {row, line}, :ok ->

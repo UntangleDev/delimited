@@ -61,6 +61,50 @@ defmodule Delimited.Test.Product do
   end
 end
 
+defmodule Delimited.Test.Payment do
+  @moduledoc false
+  # A fixed-width record in the shape these files actually come in: a record
+  # type, space-padded text, a zero-padded amount, a one-character flag, and
+  # two bytes of filler that no field declares.
+  #
+  #   1|2------9|10|12----19|20--------------37|38
+  #   6 12345678     00001234 Lovelace, Ada    1
+
+  use Delimited.Schema
+
+  delimited_schema :fixed do
+    field :record_type, :string, at: 1..1
+    field :account, :string, at: 2..9
+    field :amount, :integer, at: 12..19, pad: ?0, trim: true
+    field :name, :string, at: 20..37
+    field :active, {:enum, [true: "1", false: "0"]}, at: 38..38
+  end
+end
+
+defmodule Delimited.Test.Block do
+  @moduledoc false
+  # An unterminated file cut every 12 bytes, as a mainframe extract arrives.
+
+  use Delimited.Schema
+
+  delimited_schema :fixed, record_length: 12 do
+    field :code, :string, at: 1..4
+    field :quantity, :integer, at: 5..12, pad: ?0
+  end
+end
+
+defmodule Delimited.Test.Padded do
+  @moduledoc false
+  # A block whose declared fields stop short of the record length, so that the
+  # rest of the record is filler.
+
+  use Delimited.Schema
+
+  delimited_schema :fixed, record_length: 8 do
+    field :code, :string, at: 1..4
+  end
+end
+
 defmodule Delimited.Test.Reading do
   @moduledoc false
   # One field of each built-in type, for exercising casting and dumping through

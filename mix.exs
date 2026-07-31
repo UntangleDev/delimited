@@ -34,7 +34,7 @@ defmodule Delimited.MixProject do
   defp elixirc_paths(_env), do: ["lib"]
 
   defp description do
-    "Declarative schemas for reading and writing CSV, TSV, and other delimited files"
+    "Declarative schemas for reading and writing CSV, TSV, fixed-width, and other flat files"
   end
 
   defp package do

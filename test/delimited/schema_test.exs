@@ -130,6 +130,95 @@ defmodule Delimited.SchemaTest do
     end
   end
 
+  describe "fixed-width declaration errors" do
+    test "refuses a fixed field with no position" do
+      assert_raise ArgumentError, ~r/declares no position/, fn ->
+        defmodule NoPosition do
+          use Delimited.Schema
+
+          delimited_schema :fixed do
+            field :a, :string, at: 1..2
+            field :b, :string
+          end
+        end
+      end
+    end
+
+    test "refuses two fields covering the same bytes" do
+      assert_raise ArgumentError, ~r/:a at 1..8 and :b at 5..12.*same bytes/s, fn ->
+        defmodule Overlapping do
+          use Delimited.Schema
+
+          delimited_schema :fixed do
+            field :a, :string, at: 1..8
+            field :b, :string, at: 5..12
+          end
+        end
+      end
+    end
+
+    test "allows a gap between fields, which is filler" do
+      defmodule WithFiller do
+        use Delimited.Schema
+
+        delimited_schema :fixed do
+          field :a, :string, at: 1..2
+          field :b, :string, at: 9..10
+        end
+      end
+
+      assert [%Field{at: {0, 2}}, %Field{at: {8, 2}}] = WithFiller.__delimited__(:fields)
+    end
+
+    test "refuses a field that ends beyond the declared record length" do
+      assert_raise ArgumentError, ~r/ends at position 20, beyond the declared/, fn ->
+        defmodule TooLong do
+          use Delimited.Schema
+
+          delimited_schema :fixed, record_length: 10 do
+            field :a, :string, at: 1..20
+          end
+        end
+      end
+    end
+
+    test "refuses a position on a delimited schema, which could not honour it" do
+      assert_raise ArgumentError, ~r/declares :at, which only the fixed-width layout/, fn ->
+        defmodule PositionedDelimited do
+          use Delimited.Schema
+
+          delimited_schema do
+            field :a, :string, at: 1..8
+          end
+        end
+      end
+    end
+
+    test "refuses an alignment on a delimited schema" do
+      assert_raise ArgumentError, ~r/declares :align, which only the fixed-width layout/, fn ->
+        defmodule AlignedDelimited do
+          use Delimited.Schema
+
+          delimited_schema do
+            field :a, :string, align: :right
+          end
+        end
+      end
+    end
+
+    test "refuses a pad on a delimited schema" do
+      assert_raise ArgumentError, ~r/declares :pad, which only the fixed-width layout/, fn ->
+        defmodule PaddedDelimited do
+          use Delimited.Schema
+
+          delimited_schema do
+            field :a, :string, pad: ?0
+          end
+        end
+      end
+    end
+  end
+
   describe "custom type options" do
     test "reach the type" do
       defmodule Priced do

@@ -4,8 +4,10 @@ defmodule Delimited.PropertyTest do
 
   alias Delimited.Dialect
   alias Delimited.Encoder
+  alias Delimited.Fixed
   alias Delimited.Parser
   alias Delimited.Test.Employee
+  alias Delimited.Test.Payment
 
   # Characters chosen to land on the parser's decisions rather than around them:
   # the delimiter, the quote, both line breaks, and text on either side.
@@ -38,6 +40,64 @@ defmodule Delimited.PropertyTest do
 
       assert Delimited.decode!(Employee, encoded) == employees
     end
+  end
+
+  property "the fixed framer reads the same records however the input is sliced" do
+    check all(records <- list_of(fixed_record(), max_length: 6), size <- integer(1..8)) do
+      for opts <- [[], [record_length: 12]] do
+        input = Enum.join(records)
+        dialect = Dialect.new!(:fixed, opts)
+
+        assert frame_in_slices(input, size, dialect) ==
+                 frame_in_slices(input, byte_size(input) + 1, dialect)
+      end
+    end
+  end
+
+  property "every fixed-width value survives being written and read back" do
+    check all(payments <- list_of(payment(), max_length: 10)) do
+      encoded = Payment |> Delimited.encode!(payments) |> Enum.to_list() |> IO.iodata_to_binary()
+
+      assert Delimited.decode!(Payment, encoded) == payments
+    end
+  end
+
+  # Twelve bytes so that it frames identically as a line and as a block.
+  defp fixed_record do
+    map(list_of(member_of(["a", " ", "0", "é"]), length: 11), &(Enum.join(&1) <> "\n"))
+  end
+
+  defp payment do
+    gen all(
+          account <- padded_text(8),
+          amount <- one_of([nil, integer(0..99_999_999)]),
+          name <- padded_text(18),
+          active <- one_of([nil, boolean()])
+        ) do
+      %Payment{record_type: "6", account: account, amount: amount, name: name, active: active}
+    end
+  end
+
+  # What a space-padded field can hold and give back unchanged: no trailing
+  # space, since padding is stripped, and not blank, since a blank field is how
+  # the layout says "no value". Both are documented in Delimited.Field.
+  defp padded_text(width) do
+    @awkward
+    |> Enum.reject(&(&1 in ["\n", "\r", "\r\n"]))
+    |> member_of()
+    |> list_of(max_length: 4)
+    |> map(&Enum.join/1)
+    |> filter(&(byte_size(&1) <= width and &1 == String.trim_trailing(&1, " ")))
+    |> map(fn text -> if text == "", do: nil, else: text end)
+  end
+
+  defp frame_in_slices(input, size, dialect) do
+    input
+    |> :binary.bin_to_list()
+    |> Enum.chunk_every(size)
+    |> Enum.map(&:binary.list_to_bin/1)
+    |> Fixed.stream(dialect)
+    |> Enum.to_list()
   end
 
   defp rows do
