@@ -39,6 +39,22 @@ jobs:
       - run: mix compile --warnings-as-errors
       - run: mix credo --strict
       - run: mix test
+
+      # Benchmarks are scripts, so nothing compiles them. This runs each one
+      # without measuring anything, so that they cannot rot unnoticed.
+      - run: mix run bench/read.exs
+        env: { BENCH_TIME: 0, BENCH_WARMUP: 0, BENCH_ROWS: 100 }
+      - run: mix run bench/parser.exs
+        env: { BENCH_TIME: 0, BENCH_WARMUP: 0, BENCH_ROWS: 100 }
+      - run: mix run bench/write.exs
+        env: { BENCH_TIME: 0, BENCH_WARMUP: 0, BENCH_ROWS: 100 }
+      - run: mix run bench/memory.exs
+        env: { BENCH_TIME: 0, BENCH_WARMUP: 0, BENCH_ROWS: 100 }
+      - run: mix run bench/chunk_size.exs
+        env: { BENCH_TIME: 0, BENCH_WARMUP: 0, BENCH_ROWS: 100 }
+      - run: mix run bench/overhead.exs
+        env: { BENCH_TIME: 0, BENCH_WARMUP: 0, BENCH_ROWS: 100 }
+
       - run: mix dialyzer
 
   package:

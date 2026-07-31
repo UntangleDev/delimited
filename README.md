@@ -431,6 +431,19 @@ mix deps.get
 mix test
 ```
 
+## Benchmarks
+
+```console
+mix run bench/read.exs
+```
+
+Six scripts under `bench/`, each answering one question: what reading costs and
+how much of it is parsing rather than casting, where the parser's own time goes,
+what writing costs, whether `stream/3` really holds one row at a time, whether
+the default `:chunk_size` is right, and what each declared feature costs. See
+[bench/README.md](bench/README.md), which records what they found — including
+two results worth knowing before you tune anything.
+
 The full check, which is what continuous integration runs:
 
 ```console

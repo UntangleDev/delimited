@@ -23,6 +23,7 @@ defmodule Delimited.MixProject do
   defp deps do
     [
       {:decimal, "~> 2.0 or ~> 3.0", optional: true},
+      {:benchee, "~> 1.5", only: :dev},
       {:credo, "~> 1.7", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: :dev, runtime: false},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},

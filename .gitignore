@@ -22,6 +22,9 @@ erl_crash.dump
 # `mix archive.build` writes archive artifacts.
 *.ez
 
+# Benchee writes saved runs here for comparing one against another.
+/bench/snapshots/
+
 # `mix hex.build` writes package archives with this prefix.
 delimited-*.tar
 README.md
