@@ -20,7 +20,9 @@ defmodule Delimited.ErrorTest do
     {:required_field_missing, [line: 4, column: 2, field: :name]},
     {:dump_failed, [line: 4, field: :hired_on, value: "today", detail: "a Date"]},
     {:missing_value, [field: :active]},
-    {:io_error, [path: "employees.csv", detail: :enoent]}
+    {:unrepresentable_value,
+     [line: 4, field: :active, value: nil, detail: "it would read back as true"]},
+    {:io_error, [path: "employees.csv", operation: :open, detail: :enoent]}
   ]
 
   describe "message/1" do
@@ -32,7 +34,7 @@ defmodule Delimited.ErrorTest do
         assert String.length(message) > 40, "#{reason}: message says too little"
 
         assert message =~
-                 ~r/\b(Add|Supply|Correct|Repair|Rename|Declare|Close|Write|Check|Keep|Shorten)\b/,
+                 ~r/\b(Add|Supply|Correct|Repair|Rename|Declare|Close|Write|Check|Keep|Shorten|Change)\b/,
                "#{reason}: message does not state the next action"
       end
     end
@@ -58,10 +60,26 @@ defmodule Delimited.ErrorTest do
     end
 
     test "reads a POSIX reason for an operator" do
-      message = Error.new(:io_error, path: "x.csv", detail: :eacces) |> Exception.message()
+      message =
+        Error.new(:io_error, path: "x.csv", operation: :open, detail: :eacces)
+        |> Exception.message()
 
       assert message =~ "permission denied"
       assert message =~ ":eacces"
+    end
+
+    test "distinguishes open, write, and close failures" do
+      for {operation, text} <- [
+            open: "cannot open",
+            write: "cannot write",
+            close: "cannot finish"
+          ] do
+        message =
+          Error.new(:io_error, path: "x.csv", operation: operation, detail: :enospc)
+          |> Exception.message()
+
+        assert message =~ text
+      end
     end
   end
 

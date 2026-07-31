@@ -3,10 +3,11 @@ defmodule Delimited.Writer do
 
   # Turns schema structs into lines.
   #
-  # A row may be the schema's struct or a plain map holding every field's key,
-  # so a row computed on the way out does not have to be built into a struct
-  # first. A map missing a key is an error rather than a blank cell: a blank
-  # cell is what `nil` means, and the two must not be confused.
+  # A row may be the schema's struct or a plain map with the same top-level
+  # keys, so a computed row does not have to become a struct first. Embedded
+  # keys hold the nested maps, structs, or lists declared by the schema. A map
+  # missing a key is an error rather than a blank cell: `nil` means a blank
+  # value, and the two must not be confused.
   #
   # Line numbers in errors count the header row, so they address the line the
   # file would have had.
@@ -21,6 +22,7 @@ defmodule Delimited.Writer do
   alias Delimited.Encoder
   alias Delimited.Error
   alias Delimited.Field
+  alias Delimited.Reader
   alias Delimited.Type
 
   @bom <<0xEF, 0xBB, 0xBF>>
@@ -180,13 +182,64 @@ defmodule Delimited.Writer do
   defp terminator(%{record_length: :line, newline: newline}), do: newline
   defp terminator(_dialect), do: []
 
-  defp dump(%Field{} = field, nil, dialect), do: {:ok, null(field, dialect)}
+  defp dump(%Field{required: true}, nil, _dialect) do
+    {:error, Error.new(:required_field_missing)}
+  end
 
-  defp dump(%Field{} = field, value, _dialect) do
+  defp dump(%Field{} = field, nil, dialect) do
+    cell = null(field, dialect)
+    preserve(field, nil, cell, dialect)
+  end
+
+  defp dump(%Field{} = field, value, dialect) do
     case Type.dump(field.type, value, field.opts) do
-      {:ok, cell} -> {:ok, cell}
+      {:ok, cell} -> preserve(field, value, IO.iodata_to_binary(cell), dialect)
       {:error, expected} -> {:error, Error.new(:dump_failed, value: value, detail: expected)}
     end
+  end
+
+  # A successful dump is not enough. Trimming, null handling, fixed-width
+  # padding, a temporal format, or the type's own cast can still change the
+  # value. Apply the same read path before emitting the cell, so the writer
+  # refuses data that the declared reader cannot recover.
+  defp preserve(field, value, cell, dialect) do
+    case rendered_field(field, value, cell, dialect) do
+      :too_wide ->
+        # `placement/3` owns this error because it can report both byte counts.
+        {:ok, cell}
+
+      rendered ->
+        preserve_read(field, value, cell, rendered, dialect)
+    end
+  end
+
+  defp rendered_field(field, value, cell, %{layout: :fixed}) do
+    {_offset, width} = field.at
+    pad = if is_nil(value), do: @filler, else: Field.padding(field)
+
+    case pad_to(cell, width, Field.alignment(field), pad) do
+      {:ok, rendered} -> IO.iodata_to_binary(rendered)
+      :too_wide -> :too_wide
+    end
+  end
+
+  defp rendered_field(_field, _value, cell, _dialect), do: cell
+
+  defp preserve_read(field, value, cell, rendered, dialect) do
+    case Reader.read_field(field, rendered, dialect) do
+      {:ok, ^value} ->
+        {:ok, cell}
+
+      {:ok, read_value} ->
+        unrepresentable(value, "it would read back as #{inspect(read_value)}")
+
+      {:error, %Error{reason: reason}} ->
+        unrepresentable(value, "the written cell would be refused with #{inspect(reason)}")
+    end
+  end
+
+  defp unrepresentable(value, detail) do
+    {:error, Error.new(:unrepresentable_value, value: value, detail: detail)}
   end
 
   defp null(%Field{null: [first | _rest]}, _dialect), do: first

@@ -4,13 +4,30 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
-- Reduce the default write benchmark from 67.2 ms to 15.5 ms for ten thousand
-  eight-column rows. Deciding whether a cell needs quoting handed
-  `:binary.match/2` a fresh list of four single-byte patterns for every cell,
-  and matching against a list compiles a pattern each time — about thirty times
-  the cost of the scan. `bench/write.exs` exposed the fault because
-  `quoting: :always` was beating the default. Scanning those four bytes directly
-  removed the repeated compilation.
+### Breaking
+
+- Refuse a value before writing it when the declared read path would reject it
+  or return a different term. This covers required fields and embeds, non-nil
+  defaults, null-marker collisions, trimming, fixed-width padding, temporal
+  precision, and custom types whose callbacks are not inverses. The new
+  `:unrepresentable_value` reason reports the values that would differ.
+- Refuse a call-site format or option that changes a compiled schema's layout.
+  A layout determines field positions and embedded shapes when the schema
+  compiles, so changing it at runtime could crash or read the wrong columns.
+
+### Other changes
+
+- Record whether an `:io_error` occurred while opening, writing, or closing the
+  file, and give an action for that operation. A delayed close failure no longer
+  reports that the file could not be opened.
+- Correct the public contract for headerless extra cells, formatted dates,
+  encoding, embedded map shapes, formula escaping, and partial writes.
+- Remove repeated pattern compilation from the default writer. Deciding whether
+  a cell needs quoting handed `:binary.match/2` a fresh pattern list for every
+  cell, so `quoting: :always` was beating the default. A direct byte scan took
+  the then-current default write benchmark from 67.2 ms to 15.5 ms. After adding
+  write-time read-back validation, the current path takes 25.1 ms and remains
+  2.0 times faster than always quoting on the recorded fixture.
 - Add a benchmark suite under `bench/`, with what it found recorded in
   `bench/README.md`.
 

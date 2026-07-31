@@ -65,18 +65,22 @@ track line numbers; it provides a lower bound, not an alternative parser.
 **The quoted fixture took 1.05x as long as the plain fixture**, and the fixed
 layout read 1.21x faster than the delimited layout.
 
-**Writing got 4.3 times faster because of this suite.** The first run had
-`quoting: :always` beating the default `:as_needed` by 1.7 to 1.9 times, which
-is backwards: the default was doing more work than the option nobody sets.
-`:as_needed` scans each cell for a delimiter, a quote or a line break. It handed
-`:binary.match/2` a fresh four-element list every time, which compiles a pattern
-on each call at thirty times the cost of the scan itself. Scanning those four
-bytes by hand took the default write path from 67.2 ms to 15.5 ms. The default
-is now 2.6 times faster than `:always`.
+**The suite exposed repeated pattern compilation in the default writer.** The
+first run had `quoting: :always` beating the default `:as_needed` by 1.7 to 1.9
+times. The default was doing more work than the option few callers use.
+`:as_needed` scans each cell for a delimiter, quote, or line break. It handed
+`:binary.match/2` a fresh list of patterns for every cell, which compiled a new
+pattern on each call. A direct byte scan took the then-current default path from
+67.2 ms to 15.5 ms.
 
-For this fixture, the delimited layout now writes 1.6 times faster than the
-fixed one, having been 2.7 times slower before the fix. Padding every field took
-more time than deciding whether to quote after the quoting fix.
+The writer now also passes every rendered field through its declared read path
+before emitting it. That check refuses values that cannot survive a round trip.
+With the check in place, the default took 25.1 ms on this run and
+`quoting: :always` took 50.1 ms. The default is 2.0 times faster.
+
+For this fixture, the delimited layout took 25.5 ms and the fixed layout took
+61.2 ms. The delimited layout is 2.4 times faster. Fixed writing pads each field
+and verifies the padded form; delimited writing verifies the unpadded cell.
 
 **`chunk_size: 65_536` was the fastest tested size on this run.** The 16 KiB,
 256 KiB, 4 KiB, 512-byte and 1 MiB sizes were 1.04x, 1.07x, 1.08x, 1.34x and

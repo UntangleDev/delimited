@@ -36,10 +36,10 @@ its own.
 ## What it is for
 
 A file arrives from somewhere you do not control. Every column is text, every
-row might be malformed, and the columns are named by whoever exported them. The
-declaration above is where that file's shape is written down, so that the rest
-of the program can work with dates and integers, and so that a renamed column
-fails in one obvious place instead of quietly filling a field with `nil`.
+row might be malformed, and the exporter owns the column names. The declaration
+records that file's shape. The rest of the program can then use dates and
+integers. A renamed column fails at the boundary instead of quietly filling a
+field with `nil`.
 
 Delimited has no runtime dependencies. `:decimal` is optional, and needed only
 for the `:decimal` type.
@@ -56,9 +56,9 @@ end
 ```
 
 `:decimal` is optional and needed only for the `:decimal` type. Any 2.x or 3.x
-version works. Prefer 3.x when the files come from anywhere you do not trust:
-it refuses an absurd number such as `1e1000000000` as it reads it, where 2.x
-accepts one and renders it in full on the way back out. See `Delimited.Type`.
+version works. Prefer 3.x for files from an untrusted source. It refuses an
+absurd number such as `1e1000000000` while reading. Version 2.x accepts the
+number and renders it in full while writing. See `Delimited.Type`.
 
 ## Reading
 
@@ -102,10 +102,14 @@ a path.
 :ok = Delimited.write(Employee, "employees.csv", employees)
 ```
 
-A row may be the schema's struct, or any map holding a key for every declared
-field. Writing is the inverse of reading: whatever `Delimited` writes, it reads
-back unchanged, for every value and every dialect. The one exception is
-`escape_formulas`, described below, which changes the text deliberately.
+A row may be the schema's struct or a map with the same top-level keys. An
+embedded key holds the nested struct, map, or list that the schema declares.
+
+Before writing a field, `Delimited` applies the declared read rules to the text
+it would emit. It refuses a value if trimming, null handling, padding, a format,
+or the field type would change or reject that value. A successfully written row
+therefore reads back with the same values. `escape_formulas`, described below,
+is the deliberate exception because it changes the text.
 
 `encode!/3` returns a lazy stream of iodata, for an export that should never
 exist in memory all at once:
@@ -137,23 +141,18 @@ trusted. A cast failure fails only its own row.
 field :hired_on, :date, header: "Hire Date", required: true
 ```
 
-| Option | Meaning |
-|---|---|
-| `:header` | the column name in the file. Defaults to the field name |
-| `:default` | the value for an empty cell. Defaults to `nil` |
-| `:required` | an empty cell is an error rather than `nil` |
-| `:trim` | strip surrounding whitespace before reading |
-| `:null` | the strings that mean "no value" for this field |
-| `:format` | how a date or time is written, when it is not ISO 8601 |
-
 The field name is the struct key and the header is the file's text, because a
 file's column names are the file's business. Renaming a column in the file
 changes one `:header`, not every call site.
 
+`Delimited.Field` owns the field options, their defaults, and the fixed-width
+padding rules. Read it before declaring null markers, defaults, or read-time
+trimming, because those options decide which values the writer can preserve.
+
 ## Types
 
-`:string`, `:integer`, `:float`, `:boolean`, `:date`, `:time`,
-`:naive_datetime`, `:utc_datetime`, `:decimal`, and `{:enum, values}`.
+`Delimited.Type` owns the built-in type names and their exact read and write
+forms. It also defines the callbacks for a custom type.
 
 A cell must be consumed whole. `"12abc"` is not an integer and `"1.0"` is not an
 integer, because a partial read is how silently wrong numbers get into a data
@@ -169,13 +168,11 @@ field :invoiced_on, :date, format: "%d/%m/%Y"
 field :due_on, :date, format: ["%m/%d/%Y", "%Y-%m-%d"]
 ```
 
-The directives are `Calendar.strftime/3`'s own — `%Y %y %m %d %H %M %S %B %b`
-and `%%`, with any other character matching itself — so one declaration both
-reads and writes. Give a list to read a supplier who cannot keep to one
-spelling; the first is the one written. A format is checked when the schema
-compiles, so `%A` (a weekday name, which says nothing about the date) and
-`"%Y-%m"` for a `:date` (which never says the day) both fail the build rather
-than the first file.
+The format uses the readable subset of `Calendar.strftime/3` directives, so one
+declaration controls reading and writing. `Delimited.Type` owns that subset and
+the two-digit-year rule. Give a list to read several spellings; the writer uses
+the first. The schema compiler rejects a directive that cannot be read back and
+a format that does not state every component its type needs.
 
 A two-digit `%y` uses the POSIX window: 69-99 are the 1900s, 00-68 the 2000s.
 
@@ -211,6 +208,10 @@ Use it as `field :salary, Pence`. The error string completes the sentence
 "cannot read _value_ as ...", so write a noun phrase. Options a field does not
 recognise are passed on to the type, so `field :salary, Pence, symbol: "$"`
 reaches `cast/2` as `[symbol: "$"]`.
+
+The callbacks must be inverses for every value the type writes. Before emitting
+a field, the writer applies the field's read transformations to the dumped text
+and calls `cast/2`. It refuses the value unless `cast/2` returns the same term.
 
 ## Repeated groups of columns
 
@@ -250,7 +251,9 @@ they drift is `shipping_postcode` quietly reading the billing one. Declared
 once, they cannot.
 
 `embeds_many` needs a `:count`, because a row holds a fixed number of columns,
-and a `{n}` in its prefix to tell the copies apart.
+and a `{n}` in its prefix to tell the copies apart. A list may contain fewer
+copies; the writer leaves the remaining groups blank. A longer list is an error
+because the declared row has nowhere to put it.
 
 **A group whose every column is empty reads as `nil`**, and `nil` writes its
 columns back empty — the same rule the fixed layout uses for a blank field. One
@@ -316,8 +319,8 @@ what this does:
 An all-zeros field states zero and reads as zero. The same field left blank says
 "no value" and reads as `nil`. Writing does the same in reverse: `nil` is
 written blank whatever the field's `:pad`, because filling an empty field with
-zeros would state a number the row never held. `nil` therefore survives a round
-trip.
+zeros would state a number the row never held. For an optional field with a
+`nil` default, `nil` therefore survives a round trip.
 
 ### Records with no line terminators
 
@@ -327,9 +330,9 @@ A mainframe extract is often one long byte stream cut every N bytes. Say so:
 delimited_schema :fixed, record_length: 100 do
 ```
 
-`record_length: N` is only for a file with no terminators. A file that has them
-is framed by its lines whatever its record length, so there is never a question
-of whether a terminator belongs to a record or sits between two of them.
+`record_length: N` is only for a file with no terminators. If a file has line
+terminators, they frame its records regardless of this option. A terminator is
+therefore never part of a record.
 
 ### What a fixed-width schema will not do
 
@@ -349,8 +352,10 @@ of whether a terminator belongs to a record or sits between two of them.
 
 ## Dialects
 
-A schema declares the punctuation of the file it was written for, and any call
-can override it:
+A schema declares the layout and punctuation of the file it was written for.
+A call may override punctuation and other runtime options, but it may not change
+the layout. The layout determines field positions and embedded shapes when the
+schema compiles.
 
 ```elixir
 delimited_schema :tsv, headers: false do
@@ -360,30 +365,14 @@ end
 Delimited.read(Product, "supplier.csv", delimiter: ",", headers: true)
 ```
 
-`Delimited.Dialect` documents every option. The ones worth knowing before the
-first surprise:
+`Delimited.Dialect` owns the format names, options, defaults, and restrictions.
+Its documentation also explains the cases that change framing rather than cell
+casting. For example, a comment is removed before the parser reads any cell, so
+a commented line may contain an unclosed quote.
 
-* **The formats are `:csv`, `:tsv`, `:psv`, `:ssv`, and `:fixed`.** `:ssv` is a
-  single space, so two spaces make an empty cell between them; a file that
-  aligns columns with runs of spaces is a fixed-width file, not a space-separated
-  one.
-* **`comment: "#"` discards commented lines** while the file is being framed,
-  before any cell is read, so a commented line may hold anything at all —
-  including an unclosed quote.
-* **`layout` defaults to `:delimited`.** `:fixed` takes each field from the
-  bytes it declares; see above.
-* **`headers` defaults to `true`.** With `headers: false`, columns are matched
-  by declaration order. Under the fixed layout positions always decide, so
-  `headers: true` there only means that the first record is a header line.
-* **A column the file holds and the schema does not declare is ignored.** A
-  column the schema declares and the file does not hold is an error, because
-  that is the shape a renamed column takes.
-* **`trim` defaults to `false`**, so a value is read exactly as the file holds
-  it. Set `trim: true` for the export that pads its columns.
-* **A byte order mark is stripped when reading**, and written only with
-  `bom: true`, which is what Excel needs in order to read UTF-8.
-* **`skip_rows`** discards rows before the header row, for the export that
-  begins with a title.
+With a header row, the schema ignores undeclared columns by default and rejects
+a missing declared column. Without a header row, no name identifies an extra
+column. Each row must therefore contain exactly the declared number of cells.
 
 ## What it will not read
 
@@ -392,36 +381,35 @@ delivered confidently:
 
 * **A multi-character or non-ASCII delimiter.** The parser decides on single
   bytes.
-* **A row of a different length to the header row.** A short row is an error,
+* **A delimited row whose length differs from the header row.** Without headers,
+  the row must match the schema's declared field count. A short row is an error,
   not a row padded with `nil`.
-* **A locale-specific number or date.** `1.234,56` and `01/03/2024` cannot be
-  read without knowing where the file came from. Declare a type that knows.
-* **An encoding that is not UTF-8.** The parser works on bytes, so another
-  encoding passes through unchanged and lands in your `:string` fields as
-  whatever it was. Convert the file first.
+* **A fixed-width record shorter than a declared field.** The field is absent,
+  so the reader returns `:record_too_short` instead of guessing its bytes.
+* **A locale-specific number.** A thousands separator or currency symbol needs
+  a custom `Delimited.Type`. A date can instead declare a field `:format`.
+* **Invalid UTF-8 in a fixed-width field.** The delimited parser is byte-oriented
+  and passes other encodings through unchanged to a `:string` field. The fixed
+  layout refuses invalid UTF-8 because it usually means that the positions or
+  encoding are wrong.
 
 ## Formula injection
 
-A cell beginning with `=`, `+`, `-`, `@`, a tab, or a carriage return is
-executed as a formula by Excel, LibreOffice, and Google Sheets when the file is
-opened. A file assembled from untrusted input can therefore run a command on the
-reader's machine.
+Some spreadsheet import paths interpret a cell that starts with formula syntax
+as a formula. A malicious formula can disclose data or invoke an external
+action when the spreadsheet permits one.
 
-`escape_formulas: true` prefixes such a cell with an apostrophe. It is **off by
-default** because it changes the data: a file written with it and read back
-yields `'=SUM(A1)`, not `=SUM(A1)`. Correctness of the round trip wins over a
-defence against a hazard in a different program, and the choice is stated here
-rather than made silently.
-
-Turn it on when writing a file that a person will open in a spreadsheet:
+`escape_formulas: true` adds an apostrophe before the formula syntax. The option
+is off by default because it changes the data. Use it only after testing the
+target program's complete import and save path:
 
 ```elixir
 Delimited.write(Export, path, rows, escape_formulas: true)
 ```
 
-A value that reads as a number is never prefixed, so `-1.5` survives. The
-defence covers the leading character only. It is no substitute for the consumer
-opening the file as data rather than as a spreadsheet.
+This option is not a universal spreadsheet defence. `Delimited.Dialect` owns
+the exact leader set, the reason for the opt-in default, and the known gaps in
+the defence. Importing the file as text remains the reliable control.
 
 ## Development
 

@@ -3,14 +3,15 @@ defmodule Delimited.Encoder do
 
   # Turns cells into one line of a file.
   #
-  # The counterpart of `Delimited.Parser`: what this writes, that reads back
-  # unchanged, for every value and every dialect. The one exception is
-  # `escape_formulas: true`, which deliberately alters the text it writes. See
-  # `Delimited.Dialect` for why that is opt-in.
+  # The counterpart of `Delimited.Parser`: every cell this writes under a
+  # delimited dialect is parsed back unchanged. `escape_formulas: true` is the
+  # exception because it deliberately alters the text. `Delimited.Dialect`
+  # owns that decision and its limits.
 
   alias Delimited.Dialect
 
-  # A spreadsheet evaluates a cell beginning with one of these.
+  # These ASCII leaders can make a spreadsheet import path treat a cell as a
+  # formula. `Delimited.Dialect` documents the option's limits.
   @formula_leaders [?=, ?+, ?-, ?@, ?\t, ?\r]
 
   @numeric ~r/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/
@@ -58,13 +59,11 @@ defmodule Delimited.Encoder do
     end
   end
 
-  # Four single bytes decide this. `:binary.match/2` given a list of them
-  # compiles a pattern on each call, which costs about thirty times the scan
-  # itself and made `quoting: :always` faster than the default — see
-  # bench/write.exs. The parser compiles its patterns once per input stream.
-  # Doing that here would require encoder state across row calls because the
-  # compiled pattern holds a reference. Scanning by hand needs no state and
-  # comes within a fifth of a reused compiled pattern.
+  # `:binary.match/2` compiles a pattern each time it receives a list. That made
+  # the default quoting path compile a new pattern for every cell; the write
+  # benchmark exposed the repeated work. The parser can compile once per input
+  # stream, but the encoder has no state shared by row calls. A direct byte scan
+  # avoids both repeated compilation and shared encoder state.
   defp needs_quoting?(text, %{delimiter: delimiter, quote_char: quote_char}),
     do: scan(text, delimiter, quote_char)
 

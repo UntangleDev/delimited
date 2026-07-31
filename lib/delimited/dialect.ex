@@ -3,9 +3,10 @@ defmodule Delimited.Dialect do
   How a file is punctuated, separately from what its columns mean.
 
   A schema carries the dialect it was declared with. Every read and write
-  accepts the same options and applies them on top, so one schema can read the
-  comma-separated export and the tab-separated feed without being declared
-  twice.
+  accepts the runtime options and applies them on top, so one schema can read
+  the comma-separated export and the tab-separated feed without being declared
+  twice. A call cannot change the layout because the layout determined field
+  positions and embedded shapes when the schema compiled.
 
       delimited_schema :tsv do
         field :sku, :string
@@ -56,7 +57,8 @@ defmodule Delimited.Dialect do
 
   Reading and writing:
 
-    * `:layout` - `:delimited` (default) or `:fixed`.
+    * `:layout` - `:delimited` (default) or `:fixed`. The schema declaration
+      selects it; a read or write cannot change it after compilation.
     * `:record_length` - `:line` (default) or a positive integer. Fixed layout
       only.
     * `:delimiter` - the byte between cells, as a one-character string or a
@@ -100,29 +102,36 @@ defmodule Delimited.Dialect do
       most tools accept either.
     * `:quoting` - `:as_needed` (default) quotes a cell only when it holds a
       delimiter, a quote, or a line break. `:always` quotes every cell.
-    * `:bom` - write a UTF-8 byte order mark. Defaults to `false`. Excel needs
-      it to read UTF-8 correctly. Reading strips a byte order mark either way.
-    * `:escape_formulas` - prefix a cell that a spreadsheet would evaluate with
-      an apostrophe. Defaults to `false`. See the security note below.
+    * `:bom` - write a UTF-8 byte order mark. Defaults to `false`. Use it for a
+      consumer that requires the mark to identify UTF-8. Reading strips a byte
+      order mark either way.
+    * `:escape_formulas` - prefix a cell that a spreadsheet might interpret as a
+      formula with an apostrophe. Defaults to `false`. See the security note
+      below.
 
   ## Formula escaping
 
-  A cell beginning with `=`, `+`, `-`, `@`, a tab, or a carriage return is
-  executed as a formula by Excel, LibreOffice, and Google Sheets when the file
-  is opened. A file assembled from untrusted input can therefore run a command
-  on the reader's machine. `escape_formulas: true` prefixes such a cell with an
-  apostrophe, which those programs strip on display.
+  Some spreadsheet import paths interpret a cell beginning with `=`, `+`, `-`,
+  `@`, a tab, or a carriage return as a formula. A malicious formula can
+  disclose data or invoke an external action when the spreadsheet and its
+  security settings permit one. `escape_formulas: true` prefixes such a cell
+  with an apostrophe.
 
   It is off by default because it changes the data: a file written with it and
   read back yields `'=SUM(A1)`, not `=SUM(A1)`. Correctness of the round trip
   wins over a defence against a hazard in a different program, and the choice is
   documented here rather than made silently.
 
-  Values that read as numbers are never prefixed, so `-1.5` survives. The
-  defence covers the leading character only. It does not sanitise a cell a
-  spreadsheet interprets in some other way, does not protect a consumer that
-  splits on delimiters differently, and is no substitute for the consumer
-  opening the file as data rather than as a spreadsheet.
+  Values that have numeric syntax are not prefixed, so `-1.5` survives. This
+  option is not a universal spreadsheet defence. It checks only the first ASCII
+  byte after `Delimited` has chosen the cell boundary. It does not cover a
+  leading line feed or full-width variants of formula characters. It also does
+  not protect against a consumer that finds different cell boundaries or a
+  program that removes the apostrophe when it saves and reopens the file.
+  [OWASP's CSV Injection
+  guidance](https://owasp.org/www-community/attacks/CSV_Injection) records the
+  same portability limit. Importing the file as text remains the reliable
+  control.
   """
 
   @default_delimiter ?,
@@ -182,7 +191,7 @@ defmodule Delimited.Dialect do
   Builds a dialect from a format name, a keyword list of options, or both.
 
   Raises `ArgumentError` for an unknown format, an unknown option, or an option
-  the reader cannot honour. A dialect is programmer-owned configuration rather
+  the dialect cannot honour. A dialect is programmer-owned configuration rather
   than data read from a file, so a mistake in one is a mistake in the program.
 
       Delimited.Dialect.new!(:tsv)
