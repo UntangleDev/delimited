@@ -13,6 +13,7 @@ defmodule Delimited.Bench.Fixture do
   @warmup String.to_integer(System.get_env("BENCH_WARMUP", "1"))
 
   @doc "How many rows each fixture holds."
+  @spec rows() :: pos_integer()
   def rows, do: @rows
 
   @doc """
@@ -20,45 +21,56 @@ defmodule Delimited.Bench.Fixture do
 
   `BENCH_TIME` and `BENCH_ROWS` shorten a run when the point is to check that
   the benchmarks still work rather than to measure anything. `BENCH_SAVE` and
-  `BENCH_LOAD` name a file to compare one run against another, which is how a
-  change is shown not to have cost anything.
+  `BENCH_LOAD` name a set of files to compare one run against another. Each
+  Benchee suite writes its own file so that later suites in the same script do
+  not overwrite earlier ones.
   """
-  def options(extra \\ []) do
+  @spec options(String.t()) :: keyword()
+  @spec options(String.t(), keyword()) :: keyword()
+  def options(suite, extra \\ []) do
     Keyword.merge(
       [
         time: @time,
         warmup: @warmup,
         print: [fast_warning: false]
-      ] ++ save() ++ load(),
+      ] ++ save(suite) ++ load(suite),
       extra
     )
   end
 
-  defp save do
+  defp save(suite) do
     case System.get_env("BENCH_SAVE") do
       nil -> []
-      tag -> [save: [path: "bench/snapshots/#{tag}.benchee", tag: tag]]
+      tag -> [save: [path: snapshot(suite, tag), tag: tag]]
     end
   end
 
-  defp load do
+  defp load(suite) do
     case System.get_env("BENCH_LOAD") do
       nil -> []
-      tag -> [load: "bench/snapshots/#{tag}.benchee"]
+      tag -> [load: snapshot(suite, tag)]
     end
   end
 
+  defp snapshot(suite, tag), do: "bench/snapshots/#{suite}-#{tag}.benchee"
+
   @doc "A comma-separated file with no cell needing quotes."
+  @spec plain_csv() :: binary()
+  @spec plain_csv(pos_integer()) :: binary()
   def plain_csv(count \\ @rows) do
     build(count, &plain_row/1, "id,name,city,amount,rate,joined,active,tier\n")
   end
 
   @doc "The same file with every text cell quoted and holding a comma."
+  @spec quoted_csv() :: binary()
+  @spec quoted_csv(pos_integer()) :: binary()
   def quoted_csv(count \\ @rows) do
     build(count, &quoted_row/1, "id,name,city,amount,rate,joined,active,tier\n")
   end
 
   @doc "The same columns as fixed-width records."
+  @spec fixed_file() :: binary()
+  @spec fixed_file(pos_integer()) :: binary()
   def fixed_file(count \\ @rows) do
     build(count, &fixed_row/1, "")
   end
@@ -136,6 +148,7 @@ defmodule Delimited.Bench.Fixture do
   end
 
   @doc "Writes `contents` to a temporary path and hands it to `function`."
+  @spec with_file(binary(), (Path.t() -> result)) :: result when result: var
   def with_file(contents, function) do
     path = Path.join(System.tmp_dir!(), "delimited-bench-#{:erlang.phash2(contents)}.txt")
     File.write!(path, contents)
@@ -253,8 +266,8 @@ end
 
 defmodule Delimited.Bench.Embedded do
   @moduledoc false
-  # The same five columns, declared through embeds. Reading these two should
-  # cost the same, because an embed is expanded when the schema compiles.
+  # The same five columns, declared through embeds. The fields are expanded when
+  # the schema compiles, but reading still rebuilds the two nested structs.
 
   use Delimited.Schema
 

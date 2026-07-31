@@ -3,18 +3,16 @@ Code.require_file("support/fixture.exs", __DIR__)
 defmodule Delimited.Bench.Overhead do
   @moduledoc false
 
-  # What does each declared feature cost, and does one that should cost nothing
-  # actually cost nothing?
+  # What does each declared feature cost?
   #
-  # Two of these guard a claim made in the documentation rather than hunting for
-  # a saving:
+  # Two comparisons separate compile-time work from the runtime work that
+  # remains:
   #
-  #   * `Delimited.Embed` says an embed is expanded when the schema compiles, so
-  #     reading through embeds should cost what reading the same columns flat
-  #     costs. A gap here means the expansion is not doing what it claims.
-  #   * `Delimited.Strftime` says a format is compiled once, so reading a
-  #     declared format should be near reading ISO 8601. It cannot be faster:
-  #     `Date.from_iso8601/1` is a tighter parser than a directive walk.
+  #   * `Delimited.Embed` expands an embedded schema's fields when the parent
+  #     schema compiles. The reader still rebuilds the declared nested structs,
+  #     and the flat comparison measures that remaining cost.
+  #   * `Delimited.Strftime` compiles a declared format once. The comparison
+  #     measures the directive walk that remains against `Date.from_iso8601/1`.
   #
   # `:trim` and `:comment` are ordinary options, measured so that anyone turning
   # one on knows what they are paying.
@@ -26,27 +24,31 @@ defmodule Delimited.Bench.Overhead do
   alias Delimited.Bench.IsoDates
   alias Delimited.Bench.Row
 
+  @spec run() :: Benchee.Suite.t()
   def run do
     plain = Fixture.plain_csv()
+    addresses = addresses()
+    iso_dates = iso_dates()
+    formatted_dates = formatted_dates()
 
     IO.puts("Embeds against the same columns declared flat\n")
 
     Benchee.run(
       %{
-        "flat columns" => fn -> Delimited.decode!(Flat, addresses()) end,
-        "through embeds" => fn -> Delimited.decode!(Embedded, addresses()) end
+        "flat columns" => fn -> Delimited.decode!(Flat, addresses) end,
+        "through embeds" => fn -> Delimited.decode!(Embedded, addresses) end
       },
-      Fixture.options()
+      Fixture.options("overhead-embeds")
     )
 
     IO.puts("\nA declared date format against ISO 8601\n")
 
     Benchee.run(
       %{
-        "ISO 8601" => fn -> Delimited.decode!(IsoDates, iso_dates()) end,
-        "declared format" => fn -> Delimited.decode!(FormattedDates, formatted_dates()) end
+        "ISO 8601" => fn -> Delimited.decode!(IsoDates, iso_dates) end,
+        "declared format" => fn -> Delimited.decode!(FormattedDates, formatted_dates) end
       },
-      Fixture.options()
+      Fixture.options("overhead-date-format")
     )
 
     IO.puts("\nOptions that do extra work per cell or per line\n")
@@ -57,7 +59,7 @@ defmodule Delimited.Bench.Overhead do
         "trim: true" => fn -> Delimited.decode!(Row, plain, trim: true) end,
         "comment: \"#\"" => fn -> Delimited.decode!(Row, plain, comment: "#") end
       },
-      Fixture.options()
+      Fixture.options("overhead-options")
     )
   end
 

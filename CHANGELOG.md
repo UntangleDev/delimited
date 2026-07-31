@@ -4,12 +4,13 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
-- Write 4.3 times faster. Deciding whether a cell needs quoting handed
+- Reduce the default write benchmark from 67.2 ms to 15.5 ms for ten thousand
+  eight-column rows. Deciding whether a cell needs quoting handed
   `:binary.match/2` a fresh list of four single-byte patterns for every cell,
   and matching against a list compiles a pattern each time — about thirty times
-  the cost of the scan. Scanning those four bytes directly took the default
-  write path from 67.2 ms to 15.5 ms for ten thousand eight-column rows. Found
-  by `bench/write.exs`, where `quoting: :always` had been beating the default.
+  the cost of the scan. `bench/write.exs` exposed the fault because
+  `quoting: :always` was beating the default. Scanning those four bytes directly
+  removed the repeated compilation.
 - Add a benchmark suite under `bench/`, with what it found recorded in
   `bench/README.md`.
 

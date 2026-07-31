@@ -18,15 +18,17 @@ defmodule Delimited.Bench.ChunkSize do
 
   @sizes [512, 4_096, 16_384, 65_536, 262_144, 1_048_576]
 
+  @spec run() :: Benchee.Suite.t()
   def run do
     Fixture.with_file(Fixture.plain_csv(), fn path ->
       IO.puts("#{Fixture.rows()} rows, #{div(File.stat!(path).size, 1024)} KiB\n")
 
       @sizes
       |> Map.new(fn size ->
-        {"#{size} bytes", fn -> Row |> Delimited.stream(path, chunk_size: size) |> Stream.run() end}
+        {"#{size} bytes",
+         fn -> Row |> Delimited.stream(path, chunk_size: size) |> Stream.run() end}
       end)
-      |> Benchee.run(Fixture.options(memory_time: 1))
+      |> Benchee.run(Fixture.options("chunk-size"))
     end)
   end
 end

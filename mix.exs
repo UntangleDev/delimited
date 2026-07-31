@@ -47,7 +47,7 @@ defmodule Delimited.MixProject do
         "GitHub" => @source_url,
         "HexDocs" => "https://hexdocs.pm/delimited"
       },
-      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE .formatter.exs)
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE .formatter.exs bench/README.md)
     ]
   end
 
@@ -56,7 +56,12 @@ defmodule Delimited.MixProject do
       main: "readme",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md", "CHANGELOG.md", "LICENSE"],
+      extras: [
+        "README.md",
+        "CHANGELOG.md",
+        {"bench/README.md", filename: "benchmarks"},
+        "LICENSE"
+      ],
       groups_for_modules: [
         Schemas: [Delimited.Schema, Delimited.Field],
         Formats: [Delimited.Dialect],

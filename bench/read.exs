@@ -17,6 +17,7 @@ defmodule Delimited.Bench.Read do
   alias Delimited.Dialect
   alias Delimited.Parser
 
+  @spec run() :: Benchee.Suite.t()
   def run do
     plain = Fixture.plain_csv()
     quoted = Fixture.quoted_csv()
@@ -31,7 +32,7 @@ defmodule Delimited.Bench.Read do
         "read as text" => fn input -> Delimited.decode!(TextRow, input) end,
         "read as typed" => fn input -> Delimited.decode!(Row, input) end
       },
-      Fixture.options(inputs: %{"plain" => plain, "quoted" => quoted})
+      Fixture.options("read-pipeline", inputs: %{"plain" => plain, "quoted" => quoted})
     )
 
     IO.puts("\nThe fixed layout has no delimiters to find, and takes each field")
@@ -42,7 +43,7 @@ defmodule Delimited.Bench.Read do
         "fixed, typed" => fn -> Delimited.decode!(Delimited.Bench.FixedRow, fixed) end,
         "delimited, typed" => fn -> Delimited.decode!(Row, plain) end
       },
-      Fixture.options()
+      Fixture.options("read-layout")
     )
   end
 

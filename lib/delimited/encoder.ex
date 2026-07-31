@@ -61,11 +61,10 @@ defmodule Delimited.Encoder do
   # Four single bytes decide this. `:binary.match/2` given a list of them
   # compiles a pattern on each call, which costs about thirty times the scan
   # itself and made `quoting: :always` faster than the default — see
-  # bench/write.exs. The parser avoids that by compiling its patterns once in
-  # `Delimited.Parser.new/1`, which is not available here: a schema's dialect is
-  # a compile-time literal and a compiled pattern holds a reference, which
-  # cannot be one. Scanning by hand needs nothing compiled and comes within a
-  # fifth of a reused compiled pattern.
+  # bench/write.exs. The parser compiles its patterns once per input stream.
+  # Doing that here would require encoder state across row calls because the
+  # compiled pattern holds a reference. Scanning by hand needs no state and
+  # comes within a fifth of a reused compiled pattern.
   defp needs_quoting?(text, %{delimiter: delimiter, quote_char: quote_char}),
     do: scan(text, delimiter, quote_char)
 

@@ -40,8 +40,8 @@ jobs:
       - run: mix credo --strict
       - run: mix test
 
-      # Benchmarks are scripts, so nothing compiles them. This runs each one
-      # without measuring anything, so that they cannot rot unnoticed.
+      # Benchmarks are scripts, so nothing compiles them. Disable timed sampling
+      # and use small fixtures; Benchee still executes each scenario once.
       - run: mix run bench/read.exs
         env: { BENCH_TIME: 0, BENCH_WARMUP: 0, BENCH_ROWS: 100 }
       - run: mix run bench/parser.exs

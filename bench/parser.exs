@@ -25,13 +25,16 @@ defmodule Delimited.Bench.ParserShape do
   alias Delimited.Dialect
   alias Delimited.Parser
 
-  @rows 8_000
   @width 8
   @cell 20
 
+  @spec run() :: Benchee.Suite.t()
   def run do
     dialect = Dialect.new!()
     plain = Fixture.plain_csv()
+    quoted = Fixture.quoted_csv()
+    wide = wide()
+    narrow = narrow()
 
     IO.puts("Against the fastest thing that could produce cells at all\n")
 
@@ -40,17 +43,17 @@ defmodule Delimited.Bench.ParserShape do
         "naive split, not a parser" => fn -> naive(plain) end,
         "Delimited.Parser" => fn -> parse(plain, dialect) end
       },
-      Fixture.options()
+      Fixture.options("parser-floor")
     )
 
     IO.puts("\nThe same bytes, divided into different numbers of cells\n")
 
     Benchee.run(
       %{
-        "#{@width} cells per row" => fn -> parse(wide(), dialect) end,
-        "1 cell per row" => fn -> parse(narrow(), dialect) end
+        "#{@width} cells per row" => fn -> parse(wide, dialect) end,
+        "1 cell per row" => fn -> parse(narrow, dialect) end
       },
-      Fixture.options()
+      Fixture.options("parser-shape")
     )
 
     IO.puts("\nQuoted cells against plain ones\n")
@@ -58,9 +61,9 @@ defmodule Delimited.Bench.ParserShape do
     Benchee.run(
       %{
         "plain" => fn -> parse(plain, dialect) end,
-        "quoted" => fn -> parse(Fixture.quoted_csv(), dialect) end
+        "quoted" => fn -> parse(quoted, dialect) end
       },
-      Fixture.options()
+      Fixture.options("parser-quoting")
     )
   end
 
@@ -76,13 +79,13 @@ defmodule Delimited.Bench.ParserShape do
     cell = String.duplicate("x", @cell)
     row = Enum.join(List.duplicate(cell, @width), ",")
 
-    IO.iodata_to_binary(for _ <- 1..@rows, do: [row, "\n"])
+    IO.iodata_to_binary(for _ <- 1..Fixture.rows(), do: [row, "\n"])
   end
 
   defp narrow do
     row = String.duplicate("x", @width * @cell + @width - 1)
 
-    IO.iodata_to_binary(for _ <- 1..@rows, do: [row, "\n"])
+    IO.iodata_to_binary(for _ <- 1..Fixture.rows(), do: [row, "\n"])
   end
 end
 

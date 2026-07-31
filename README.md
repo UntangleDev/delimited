@@ -437,12 +437,16 @@ mix test
 mix run bench/read.exs
 ```
 
-Six scripts under `bench/`, each answering one question: what reading costs and
-how much of it is parsing rather than casting, where the parser's own time goes,
-what writing costs, whether `stream/3` really holds one row at a time, whether
-the default `:chunk_size` is right, and what each declared feature costs. See
-[bench/README.md](bench/README.md), which records what they found — including
-two results worth knowing before you tune anything.
+Each script under `bench/` answers one question. The suite measures:
+
+* reading, with parsing and casting shown separately;
+* parser cost per byte and per cell;
+* writing under each quoting policy;
+* result growth when `read/3` collects rows and a stream consumer discards them;
+* the effect of `:chunk_size`; and
+* the cost of declared features.
+
+See [bench/README.md](bench/README.md) for the results and their limits.
 
 The full check, which is what continuous integration runs:
 
@@ -451,6 +455,9 @@ mix format --check-formatted
 mix compile --warnings-as-errors
 mix credo --strict
 mix test
+for benchmark in bench/*.exs; do
+  BENCH_TIME=0 BENCH_WARMUP=0 BENCH_ROWS=100 mix run "$benchmark"
+done
 mix dialyzer
 mix docs --warnings-as-errors
 mix hex.build
