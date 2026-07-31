@@ -31,8 +31,18 @@ defmodule Delimited.Type do
   `2024-03-01T12:00:00+02:00` reads as `2024-03-01 10:00:00Z`. Writing it back
   produces the UTC form, not the original offset.
 
-  `:decimal` requires the optional `:decimal` dependency. Declaring the type
-  without it raises at compile time.
+  `:decimal` requires the optional `:decimal` dependency, at any 2.x or 3.x
+  version. Declaring the type without it raises at compile time.
+
+  Which of those you resolve decides what happens to a hostile number, so it is
+  worth choosing rather than inheriting. Decimal 3.0 made the IEEE 754
+  decimal128 limits its defaults, mitigating
+  [CVE-2026-32686](https://nvd.nist.gov/vuln/detail/CVE-2026-32686): a cell
+  holding `1e1000000000` is refused as it is read. Every 2.x version accepts
+  that cell, and writing the value back renders it in full, at a length that
+  grows with the exponent, which a file you do not control can therefore use to
+  exhaust memory. Require `{:decimal, "~> 3.0"}` if you read files from
+  anywhere you do not trust.
 
   No built-in type parses a locale-specific date, a thousands separator, or a
   currency symbol. Define a type for those.
