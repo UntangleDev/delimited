@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.15.8"
+            otp: "26.2"
+          - elixir: "1.20.2"
+            otp: "28.3"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-otp-${{ matrix.otp }}-elixir-${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
+
+      - run: mix deps.get
+      - run: mix format --check-formatted
+      - run: mix compile --warnings-as-errors
+      - run: mix credo --strict
+      - run: mix test
+      - run: mix dialyzer
+
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.20.2"
+          otp-version: "28.3"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-package-${{ hashFiles('mix.lock') }}
+
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+      - run: mix docs --warnings-as-errors
+      - run: mix hex.build

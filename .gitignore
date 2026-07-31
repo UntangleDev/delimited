@@ -1,0 +1,26 @@
+# Mix writes compiled artifacts here.
+/_build/
+
+# Mix downloads dependency sources here.
+/deps/
+
+# direnv stores the evaluated development environment here.
+/.direnv/
+
+# ExCoveralls and `mix test --cover` write coverage output here.
+/cover/
+
+# ExDoc writes generated documentation here.
+/doc/
+
+# Project tasks can use this directory for disposable files.
+/tmp/
+
+# The Erlang VM writes this file after some crashes.
+erl_crash.dump
+
+# `mix archive.build` writes archive artifacts.
+*.ez
+
+# `mix hex.build` writes package archives with this prefix.
+delimited-*.tar
