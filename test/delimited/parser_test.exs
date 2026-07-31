@@ -109,6 +109,46 @@ defmodule Delimited.ParserTest do
     end
   end
 
+  describe "comments" do
+    test "discards a commented line" do
+      assert rows("# a note\na,b\n", comment: "#") == [["a", "b"]]
+    end
+
+    test "discards a commented line holding anything at all" do
+      # The reason comments are handled while framing rather than after: this
+      # line would otherwise open a quoted field and swallow the rest of the
+      # file.
+      assert rows(~s(# don't, "even, try\na,b\n), comment: "#") == [["a", "b"]]
+    end
+
+    test "discards a commented last line with no terminator" do
+      assert rows("a,b\n# trailing", comment: "#") == [["a", "b"]]
+    end
+
+    test "keeps the comment character anywhere but the start of a line" do
+      assert rows("a,#b\n", comment: "#") == [["a", "#b"]]
+      assert rows(~s("#a",b\n), comment: "#") == [["#a", "b"]]
+    end
+
+    test "keeps a commented line when no comment character is declared" do
+      assert rows("# a note\na,b\n") == [["# a note"], ["a", "b"]]
+    end
+
+    test "counts a commented line when numbering rows" do
+      assert lines("# one\na\n# three\nb\n", comment: "#") == [2, 4]
+    end
+
+    test "frames the same rows however a comment is sliced" do
+      input = "# a note\na,b\n#\nc,d\n"
+      expected = rows(input, comment: "#")
+
+      for size <- 1..byte_size(input) do
+        assert rows_in_slices(slice(input, size), comment: "#") == expected,
+               "differs when sliced every #{size} bytes"
+      end
+    end
+  end
+
   describe "line numbers" do
     test "counts rows from one" do
       assert lines("a\nb\nc\n") == [1, 2, 3]

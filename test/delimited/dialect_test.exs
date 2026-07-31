@@ -29,7 +29,14 @@ defmodule Delimited.DialectTest do
     end
 
     test "refuses an unknown format" do
-      assert_raise ArgumentError, ~r/unknown format :psv/, fn -> Dialect.new!(:psv) end
+      assert_raise ArgumentError, ~r/unknown format :xlsx/, fn -> Dialect.new!(:xlsx) end
+    end
+
+    test "names the delimiter of every format it knows" do
+      assert Dialect.new!(:csv).delimiter == ?,
+      assert Dialect.new!(:tsv).delimiter == ?\t
+      assert Dialect.new!(:psv).delimiter == ?|
+      assert Dialect.new!(:ssv).delimiter == ?\s
     end
 
     test "refuses an unknown option" do
@@ -66,6 +73,23 @@ defmodule Delimited.DialectTest do
       assert_raise ArgumentError, ~r/list of strings/, fn -> Dialect.new!(null: "NULL") end
       assert_raise ArgumentError, ~r/non-negative integer/, fn -> Dialect.new!(skip_rows: -1) end
       assert_raise ArgumentError, ~r/positive integer/, fn -> Dialect.new!(chunk_size: 0) end
+    end
+  end
+
+  describe "comments" do
+    test "no line is a comment unless one is declared" do
+      assert Dialect.new!().comment == nil
+    end
+
+    test "takes a comment byte as a string or a codepoint" do
+      assert Dialect.new!(comment: "#").comment == ?#
+      assert Dialect.new!(comment: ?#).comment == ?#
+    end
+
+    test "refuses a comment of more than one byte" do
+      assert_raise ArgumentError, ~r/single ASCII character/, fn ->
+        Dialect.new!(comment: "//")
+      end
     end
   end
 

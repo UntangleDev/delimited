@@ -16,7 +16,10 @@ should be relaxed without a decision recorded here.
 - A multi-character or non-ASCII delimiter. The parser decides on single bytes.
 - A row whose length differs from the header row's, or a fixed-width record
   shorter than a declared field.
-- A locale-specific number or date. A custom `Delimited.Type` is the answer.
+- A locale-specific number: a thousands separator or a currency symbol. A custom
+  `Delimited.Type` is the answer. A locale-specific *date* is no longer refused;
+  `:format` reads one, using `Calendar.strftime/3`'s directives so that a single
+  declaration serves reading and writing.
 - Any encoding other than UTF-8. The delimited parser is byte-oriented, so
   another encoding passes through into `:string` fields unchanged; the fixed
   layout refuses a field whose bytes are not valid UTF-8, because there the

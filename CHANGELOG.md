@@ -4,6 +4,27 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Dates and times that are not ISO 8601
+
+- Add the field option `:format`, taking `Calendar.strftime/3`'s directives, so
+  that one declaration both reads and writes: `field :invoiced_on, :date,
+  format: "%d/%m/%Y"`. Give a list to read a source that uses more than one
+  spelling; the first is the one written.
+- Check a format when the schema compiles: a directive that cannot be read back
+  such as `%A`, a format that never states what its type needs such as `"%Y-%m"`
+  for a `:date`, and a format on a type that has none are all build failures.
+- Read `%y` through the POSIX century window, where 69-99 are the 1900s and
+  00-68 the 2000s. Documented as the guess it is.
+- This reverses part of the documented refusal of locale-specific values. A
+  thousands separator and a currency symbol are still a custom type's business.
+
+### Other formats and comments
+
+- Add the `:psv` and `:ssv` format names, for pipe- and space-separated files.
+- Add `comment: "#"`, which discards a commented line while the file is being
+  framed, before any cell is read, so a commented line may hold an unclosed
+  quote. Fixed-length blocks have no lines and so have no comments.
+
 ### Fixed-width layouts
 
 - Add `layout: :fixed`, where a field is a range of bytes rather than a cell.

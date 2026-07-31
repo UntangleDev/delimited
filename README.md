@@ -139,6 +139,7 @@ field :hired_on, :date, header: "Hire Date", required: true
 | `:required` | an empty cell is an error rather than `nil` |
 | `:trim` | strip surrounding whitespace before reading |
 | `:null` | the strings that mean "no value" for this field |
+| `:format` | how a date or time is written, when it is not ISO 8601 |
 
 The field name is the struct key and the header is the file's text, because a
 file's column names are the file's business. Renaming a column in the file
@@ -151,8 +152,30 @@ changes one `:header`, not every call site.
 
 A cell must be consumed whole. `"12abc"` is not an integer and `"1.0"` is not an
 integer, because a partial read is how silently wrong numbers get into a data
-set. No built-in type parses a locale-specific date, a thousands separator, or a
-currency symbol. Declare a type for those:
+set.
+
+### Dates that are not ISO 8601
+
+`01/03/2024` is the first of March or the third of January depending on who
+wrote it, so the schema says which:
+
+```elixir
+field :invoiced_on, :date, format: "%d/%m/%Y"
+field :due_on, :date, format: ["%m/%d/%Y", "%Y-%m-%d"]
+```
+
+The directives are `Calendar.strftime/3`'s own — `%Y %y %m %d %H %M %S %B %b`
+and `%%`, with any other character matching itself — so one declaration both
+reads and writes. Give a list to read a supplier who cannot keep to one
+spelling; the first is the one written. A format is checked when the schema
+compiles, so `%A` (a weekday name, which says nothing about the date) and
+`"%Y-%m"` for a `:date` (which never says the day) both fail the build rather
+than the first file.
+
+A two-digit `%y` uses the POSIX window: 69-99 are the 1900s, 00-68 the 2000s.
+
+No built-in type parses a thousands separator or a currency symbol. Declare a
+type for those:
 
 ```elixir
 defmodule Pence do
@@ -276,6 +299,13 @@ Delimited.read(Product, "supplier.csv", delimiter: ",", headers: true)
 `Delimited.Dialect` documents every option. The ones worth knowing before the
 first surprise:
 
+* **The formats are `:csv`, `:tsv`, `:psv`, `:ssv`, and `:fixed`.** `:ssv` is a
+  single space, so two spaces make an empty cell between them; a file that
+  aligns columns with runs of spaces is a fixed-width file, not a space-separated
+  one.
+* **`comment: "#"` discards commented lines** while the file is being framed,
+  before any cell is read, so a commented line may hold anything at all —
+  including an unclosed quote.
 * **`layout` defaults to `:delimited`.** `:fixed` takes each field from the
   bytes it declares; see above.
 * **`headers` defaults to `true`.** With `headers: false`, columns are matched

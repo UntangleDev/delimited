@@ -72,6 +72,20 @@ defmodule Delimited.FixedTest do
     end
   end
 
+  describe "comments" do
+    test "discards a commented line" do
+      assert records("# a note\nab\n", comment: "#") == ["ab"]
+    end
+
+    test "keeps the comment character anywhere but the start of a record" do
+      assert records("a#b\n", comment: "#") == ["a#b"]
+    end
+
+    test "does not comment a fixed-length block, which has no lines" do
+      assert records("#a#b", record_length: 2, comment: "#") == ["#a", "#b"]
+    end
+  end
+
   describe "byte order marks" do
     test "strips a leading byte order mark, which would shift every position" do
       assert records(<<0xEF, 0xBB, 0xBF>> <> "ab\n") == ["ab"]

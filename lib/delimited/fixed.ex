@@ -25,7 +25,14 @@ defmodule Delimited.Fixed do
   alias Delimited.Dialect
   alias Delimited.Error
 
-  defstruct [:record_length, :skip_blank_lines, buffer: "", line: 1, bom_pending?: true]
+  defstruct [
+    :record_length,
+    :skip_blank_lines,
+    :comment,
+    buffer: "",
+    line: 1,
+    bom_pending?: true
+  ]
 
   @type framed :: {pos_integer(), binary()}
   @opaque t :: %__MODULE__{}
@@ -39,7 +46,8 @@ defmodule Delimited.Fixed do
   def new(%Dialect{} = dialect) do
     %__MODULE__{
       record_length: dialect.record_length,
-      skip_blank_lines: dialect.skip_blank_lines
+      skip_blank_lines: dialect.skip_blank_lines,
+      comment: dialect.comment
     }
   end
 
@@ -123,6 +131,12 @@ defmodule Delimited.Fixed do
   end
 
   defp frame(state, records), do: {:ok, Enum.reverse(records), state}
+
+  # A commented line is not a record. Only line framing can have one: a file cut
+  # every N bytes has no lines to comment.
+  defp emit(%{comment: comment}, <<comment, _rest::binary>>, _line, records)
+       when is_integer(comment),
+       do: records
 
   # An entirely empty line holds no record. A line of spaces is not empty: under
   # this layout it is a record whose every field is blank.

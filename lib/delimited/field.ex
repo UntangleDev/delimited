@@ -28,6 +28,11 @@ defmodule Delimited.Field do
       dialect's `:null`. Use it for the file that writes `"N/A"` in one column
       and leaves the rest blank.
 
+    * `:format` - how a date or time is written, where the file does not use
+      ISO 8601: `field :invoiced_on, :date, format: "%d/%m/%Y"`. Give a list to
+      read more than one spelling. Only `:date`, `:time`, `:naive_datetime`, and
+      `:utc_datetime` accept it. See `Delimited.Type` for the directives.
+
   Any other option is passed to a custom type. Built-in types reject unknown
   options, so a misspelt `:heder` fails the build rather than reading the wrong
   column.
@@ -82,6 +87,7 @@ defmodule Delimited.Field do
   `{:enum, [true: "Y", false: "N"]}` rather than `:boolean`.
   """
 
+  alias Delimited.Strftime
   alias Delimited.Type
 
   @enforce_keys [:name, :type, :header]
@@ -119,7 +125,9 @@ defmodule Delimited.Field do
   # An option left undeclared is stored as nil rather than resolved here, so
   # that Delimited.Schema can tell "not declared" from "declared as the default"
   # when it checks a field against its layout.
-  @own_options [:header, :default, :required, :trim, :null, :at, :align, :pad]
+  @own_options [:header, :default, :required, :trim, :null, :at, :align, :pad, :format]
+
+  @temporal_types [:date, :time, :naive_datetime, :utc_datetime]
 
   @right_aligned_types [:integer, :float, :decimal]
 
@@ -140,7 +148,7 @@ defmodule Delimited.Field do
       at: at!(name, own),
       align: align!(name, own),
       pad: pad!(name, own),
-      opts: type_options!(name, type, rest)
+      opts: type_options!(name, type, rest) ++ format!(name, type, own)
     }
   end
 
@@ -270,6 +278,24 @@ defmodule Delimited.Field do
   """
   @spec declared_at(t()) :: Range.t()
   def declared_at(%__MODULE__{at: {offset, length}}), do: (offset + 1)..(offset + length)
+
+  # Compiled here rather than on first use, so that an unreadable format fails
+  # the build instead of every row of the first file.
+  defp format!(name, type, own) do
+    case Keyword.get(own, :format) do
+      nil ->
+        []
+
+      _formats when type not in @temporal_types ->
+        raise ArgumentError,
+              "field #{inspect(name)} declares a :format, which only #{inspect(@temporal_types)} " <>
+                "can use. A type of its own is the place to read anything else that the " <>
+                "file writes in a shape of its own."
+
+      formats ->
+        [format: formats |> List.wrap() |> Enum.map(&Strftime.compile!(&1, type, name))]
+    end
+  end
 
   defp boolean_or_nil!(_name, key, own) when is_atom(key) do
     case Keyword.get(own, key) do

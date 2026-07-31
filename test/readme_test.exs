@@ -134,6 +134,58 @@ defmodule Delimited.ReadmeTest do
     assert {:ok, [%Employee{name: "A"}]} = Delimited.decode(Employee, csv)
   end
 
+  defmodule Dated do
+    @moduledoc false
+
+    use Delimited.Schema
+
+    delimited_schema do
+      field :invoiced_on, :date, format: "%d/%m/%Y"
+      field :due_on, :date, format: ["%m/%d/%Y", "%Y-%m-%d"]
+    end
+  end
+
+  describe "the date format example" do
+    test "reads each column the way its own format says" do
+      assert {:ok, [row]} =
+               Delimited.decode(Dated, "invoiced_on,due_on\n01/03/2024,01/03/2024\n")
+
+      assert row == %Dated{invoiced_on: ~D[2024-03-01], due_on: ~D[2024-01-03]}
+    end
+
+    test "reads either declared spelling, and writes the first" do
+      assert {:ok, [row]} =
+               Delimited.decode(Dated, "invoiced_on,due_on\n01/03/2024,2024-01-03\n")
+
+      assert row.due_on == ~D[2024-01-03]
+
+      written = Dated |> Delimited.encode!([row]) |> Enum.to_list() |> IO.iodata_to_binary()
+
+      assert written == "invoiced_on,due_on\n01/03/2024,01/03/2024\n"
+    end
+
+    test "reads a two-digit year through the POSIX window" do
+      defmodule Short do
+        @moduledoc false
+        use Delimited.Schema
+
+        delimited_schema do
+          field :on, :date, format: "%d/%m/%y"
+        end
+      end
+
+      assert {:ok, [%{on: ~D[1999-03-01]}]} = Delimited.decode(Short, "on\n01/03/99\n")
+      assert {:ok, [%{on: ~D[2068-03-01]}]} = Delimited.decode(Short, "on\n01/03/68\n")
+    end
+  end
+
+  test "the comment example discards a line that would otherwise break parsing" do
+    csv = ~s(# supplier's note: "provisional\nEmployee ID,name\n1,A\n)
+
+    assert {:ok, [%Employee{name: "A"}]} =
+             Delimited.decode(Employee, csv, comment: "#", on_missing_header: :ignore)
+  end
+
   describe "the fixed-width example" do
     test "reads the positions the comments claim" do
       record = "6" <> "12345678" <> "  " <> "00001234" <> "Lovelace, Ada     " <> "1"

@@ -23,6 +23,12 @@ defmodule Delimited.Dialect do
   the registration does not describe only when a value contains a tab, a quote,
   or a line break.
 
+  `:psv` uses a pipe and `:ssv` a single space. A space-separated file is the
+  one to be most careful with: a single space is a delimiter like any other, so
+  two spaces make an empty cell between them rather than one wider gap. A file
+  that aligns its columns with runs of spaces is a fixed-width file, and
+  `layout: :fixed` reads it.
+
   `:fixed` selects the fixed-width layout and turns `:headers` off, since a
   fixed-width file rarely carries a header row.
 
@@ -71,6 +77,11 @@ defmodule Delimited.Dialect do
 
   Reading only:
 
+    * `:comment` - a byte that marks a whole line as a comment, as a
+      one-character string or a codepoint. Defaults to `nil`, meaning no line is
+      a comment. A commented line is discarded while the file is being framed,
+      before any cell is read, so it may hold anything at all including an
+      unclosed quote.
     * `:skip_rows` - discard this many rows before the header row. Use it for
       the export that starts with a title and a blank line. Defaults to `0`.
     * `:skip_blank_lines` - ignore lines holding no cells at all. Defaults to
@@ -119,6 +130,7 @@ defmodule Delimited.Dialect do
 
   defstruct delimiter: @default_delimiter,
             quote_char: @default_quote,
+            comment: nil,
             layout: :delimited,
             record_length: :line,
             newline: "\n",
@@ -137,6 +149,7 @@ defmodule Delimited.Dialect do
   @type t :: %__MODULE__{
           delimiter: byte(),
           quote_char: byte(),
+          comment: byte() | nil,
           layout: :delimited | :fixed,
           record_length: :line | pos_integer(),
           newline: String.t(),
@@ -160,6 +173,8 @@ defmodule Delimited.Dialect do
   @formats [
     csv: [layout: :delimited, delimiter: @default_delimiter],
     tsv: [layout: :delimited, delimiter: ?\t],
+    psv: [layout: :delimited, delimiter: ?|],
+    ssv: [layout: :delimited, delimiter: ?\s],
     fixed: [layout: :fixed, headers: false]
   ]
 
@@ -208,6 +223,9 @@ defmodule Delimited.Dialect do
     |> Enum.reduce(dialect, fn {key, value}, acc -> put(acc, key, value) end)
     |> validate_bytes!()
   end
+
+  defp put(dialect, :comment, nil), do: %{dialect | comment: nil}
+  defp put(dialect, :comment, value), do: %{dialect | comment: byte!(:comment, value)}
 
   defp put(dialect, :layout, value),
     do: %{dialect | layout: one_of!(:layout, value, [:delimited, :fixed])}

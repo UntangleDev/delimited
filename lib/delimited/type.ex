@@ -34,8 +34,59 @@ defmodule Delimited.Type do
   `:decimal` requires the optional `:decimal` dependency. Declaring the type
   without it raises at compile time.
 
-  No built-in type parses a locale-specific date, a thousands separator, or a
-  currency symbol. Define a type for those.
+  No built-in type parses a thousands separator or a currency symbol. Define a
+  type for those.
+
+  ## Dates and times that are not ISO 8601
+
+  A file writing `01/03/2024` needs to say which way round it is, and `:format`
+  is where it says so:
+
+      field :invoiced_on, :date, format: "%d/%m/%Y"
+      field :due_on, :date, format: "%m/%d/%Y"
+
+  The directives are `Calendar.strftime/3`'s own, so one declaration serves both
+  directions: reading uses it, and writing hands it to the standard library.
+  Only those that can be read back are accepted, and a format is checked when
+  the schema compiles rather than on the first file.
+
+  | Directive | Reads |
+  |---|---|
+  | `%Y` | a year of up to four digits |
+  | `%y` | a two-digit year. See the century note below |
+  | `%m` | a month number |
+  | `%d` | a day |
+  | `%H`, `%M`, `%S` | hour, minute, second |
+  | `%B` | a month's full English name, in any case |
+  | `%b` | a month's abbreviated English name, in any case |
+  | `%%` | a literal `%` |
+
+  Any other character in the format matches itself, so `%d-%b-%Y` reads
+  `01-Mar-2024`. A number is read greedily up to its width, which means a format
+  writing `01` still reads `1` where a separator follows it, and that a format
+  with no separators at all, such as `%Y%m%d`, still divides correctly.
+
+  Declaring several formats reads a supplier who cannot keep to one:
+
+      field :invoiced_on, :date, format: ["%d/%m/%Y", "%Y-%m-%d"]
+
+  They are tried in order, and the first is the one written. A declared format
+  replaces ISO 8601 rather than adding to it, so a field declared `"%d/%m/%Y"`
+  refuses `2024-03-01`. Accepting both would let one file carry two spellings of
+  the same date and be read without complaint.
+
+  `%y` has to guess a century the file never stated. It uses the POSIX window,
+  where 69 to 99 are the 1900s and 00 to 68 are the 2000s, so `15-Jun-99` reads
+  as 1999 and `15-Jun-00` as 2000. Where a file's own convention differs, and
+  for anything meant to outlive 2068, a four-digit year is the only honest fix.
+
+  A format must state everything its type needs. `format: "%Y-%m"` on a `:date`
+  is refused when the schema compiles, because the alternative is every date
+  silently landing on the first of the month.
+
+  A `:utc_datetime` read through a format is taken as UTC, since a format of
+  this kind carries no offset. Leave the type on ISO 8601 where the file states
+  one.
 
   ## Enumerations
 
@@ -70,6 +121,8 @@ defmodule Delimited.Type do
   `[currency: "GBP"]`. Built-in types accept no options and reject unknown ones,
   because there a stray key is a typo rather than configuration.
   """
+
+  alias Delimited.Strftime
 
   @typedoc "A built-in type name, an enumeration, or a module implementing this behaviour."
   @type t ::
@@ -213,18 +266,13 @@ defmodule Delimited.Type do
     end
   end
 
-  def cast(:date, text, _opts), do: wrap(Date.from_iso8601(text), :date)
-  def cast(:time, text, _opts), do: wrap(Time.from_iso8601(text), :time)
+  def cast(:date, text, opts), do: temporal(:date, text, opts, &Date.from_iso8601/1)
+  def cast(:time, text, opts), do: temporal(:time, text, opts, &Time.from_iso8601/1)
 
-  def cast(:naive_datetime, text, _opts),
-    do: wrap(NaiveDateTime.from_iso8601(text), :naive_datetime)
+  def cast(:naive_datetime, text, opts),
+    do: temporal(:naive_datetime, text, opts, &NaiveDateTime.from_iso8601/1)
 
-  def cast(:utc_datetime, text, _opts) do
-    case DateTime.from_iso8601(text) do
-      {:ok, datetime, _offset} -> {:ok, datetime}
-      {:error, _reason} -> {:error, describe(:utc_datetime)}
-    end
-  end
+  def cast(:utc_datetime, text, opts), do: temporal(:utc_datetime, text, opts, &from_iso8601/1)
 
   def cast(:decimal, text, _opts), do: cast_decimal(text)
 
@@ -247,13 +295,15 @@ defmodule Delimited.Type do
   def dump(:float, value, _opts) when is_integer(value), do: {:ok, Integer.to_string(value)}
   def dump(:boolean, true, _opts), do: {:ok, "true"}
   def dump(:boolean, false, _opts), do: {:ok, "false"}
-  def dump(:date, %Date{} = value, _opts), do: {:ok, Date.to_iso8601(value)}
-  def dump(:time, %Time{} = value, _opts), do: {:ok, Time.to_iso8601(value)}
+  def dump(:date, %Date{} = value, opts), do: written(value, opts, &Date.to_iso8601/1)
+  def dump(:time, %Time{} = value, opts), do: written(value, opts, &Time.to_iso8601/1)
 
-  def dump(:naive_datetime, %NaiveDateTime{} = value, _opts),
-    do: {:ok, NaiveDateTime.to_iso8601(value)}
+  def dump(:naive_datetime, %NaiveDateTime{} = value, opts),
+    do: written(value, opts, &NaiveDateTime.to_iso8601/1)
 
-  def dump(:utc_datetime, %DateTime{} = value, _opts), do: {:ok, DateTime.to_iso8601(value)}
+  def dump(:utc_datetime, %DateTime{} = value, opts),
+    do: written(value, opts, &DateTime.to_iso8601/1)
+
   def dump(:decimal, value, _opts) when is_struct(value), do: dump_decimal(value)
 
   def dump({:enum, values}, value, _opts) do
@@ -267,6 +317,15 @@ defmodule Delimited.Type do
     do: module.dump(value, opts)
 
   def dump(type, _value, _opts), do: {:error, describe(type)}
+
+  # The first declared format is the one written. A schema that reads several
+  # spellings still has to choose one to produce.
+  defp written(value, opts, iso8601) do
+    case Keyword.get(opts, :format) do
+      nil -> {:ok, iso8601.(value)}
+      [{format, _directives} | _rest] -> {:ok, Calendar.strftime(value, format)}
+    end
+  end
 
   if @decimal_available? do
     defp cast_decimal(text) do
@@ -283,6 +342,36 @@ defmodule Delimited.Type do
   else
     defp cast_decimal(_text), do: raise(ArgumentError, @decimal_missing)
     defp dump_decimal(_value), do: raise(ArgumentError, @decimal_missing)
+  end
+
+  # A declared format replaces ISO 8601 rather than adding to it. Accepting both
+  # would mean a file could carry two spellings of the same date and be read
+  # without complaint, which is how a data set ends up with neither.
+  defp temporal(type, text, opts, iso8601) do
+    case Keyword.get(opts, :format) do
+      nil ->
+        wrap(iso8601.(text), type)
+
+      formats ->
+        case Strftime.parse(formats, text, type) do
+          {:ok, value} -> {:ok, value}
+          :error -> {:error, describe_formats(formats)}
+        end
+    end
+  end
+
+  defp from_iso8601(text) do
+    case DateTime.from_iso8601(text) do
+      {:ok, datetime, _offset} -> {:ok, datetime}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp describe_formats([{format, _directives}]), do: "a date or time written #{inspect(format)}"
+
+  defp describe_formats(formats) do
+    "a date or time written " <>
+      Enum.map_join(formats, ", or ", fn {format, _directives} -> inspect(format) end)
   end
 
   defp wrap({:ok, value}, _type), do: {:ok, value}

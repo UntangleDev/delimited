@@ -27,6 +27,7 @@ defmodule Delimited.Parser do
   defstruct [
     :delimiter,
     :quote_char,
+    :comment,
     :stops_unquoted,
     :stops_quoted,
     :skip_blank_lines,
@@ -53,6 +54,7 @@ defmodule Delimited.Parser do
     %__MODULE__{
       delimiter: dialect.delimiter,
       quote_char: dialect.quote_char,
+      comment: dialect.comment,
       stops_unquoted: :binary.compile_pattern([<<dialect.delimiter>>, "\n", "\r"]),
       stops_quoted: :binary.compile_pattern([<<dialect.quote_char>>, "\n"]),
       skip_blank_lines: dialect.skip_blank_lines
@@ -114,6 +116,28 @@ defmodule Delimited.Parser do
   defp bom_prefix?(data), do: :binary.longest_common_prefix([@bom, data]) == byte_size(data)
 
   defp scan(%{state: :field_start} = parser, <<>>, rows), do: done(parser, rows)
+
+  # A comment is recognised only where a row would start, and consumed without
+  # being parsed at all. That is the point of doing it here: a commented line is
+  # prose, and prose contains apostrophes and unclosed quotes.
+  defp scan(
+         %{state: :field_start, comment: comment, row_content?: false} = parser,
+         <<comment, rest::binary>>,
+         rows
+       )
+       when is_integer(comment) do
+    scan(%{parser | state: :comment}, rest, rows)
+  end
+
+  defp scan(%{state: :comment} = parser, data, rows) do
+    case :binary.match(data, "\n") do
+      :nomatch ->
+        done(parser, rows)
+
+      {position, 1} ->
+        scan(reset(%{parser | line: parser.line + 1}), advance(data, position + 1), rows)
+    end
+  end
 
   defp scan(
          %{state: :field_start, quote_char: quote_char} = parser,
@@ -180,6 +204,9 @@ defmodule Delimited.Parser do
   defp scan(%{state: :quote_end} = parser, _data, rows) do
     {:error, Enum.reverse(rows), error(:unescaped_quote, parser, parser.line)}
   end
+
+  defp advance(data, position),
+    do: binary_part(data, position, byte_size(data) - position)
 
   # Both halves are sub-binaries of `data` rather than copies of it.
   defp split(data, position) do
