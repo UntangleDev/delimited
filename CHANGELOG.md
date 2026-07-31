@@ -4,6 +4,15 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.2.0
+
+### Breaking
+
+- `:format`, `:at`, `:align`, and `:pad` are now field options, so a custom type
+  that took an option under one of those names no longer receives it. Every
+  other option is still passed through untouched. Rename the option in the type,
+  or read the value from one of the field options that now owns the name.
+
 ### Dates and times that are not ISO 8601
 
 - Add the field option `:format`, taking `Calendar.strftime/3`'s directives, so
