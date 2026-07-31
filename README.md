@@ -394,11 +394,13 @@ delivered confidently:
   bytes.
 * **A row of a different length to the header row.** A short row is an error,
   not a row padded with `nil`.
-* **A locale-specific number or date.** `1.234,56` and `01/03/2024` cannot be
-  read without knowing where the file came from. Declare a type that knows.
-* **An encoding that is not UTF-8.** The parser works on bytes, so another
-  encoding passes through unchanged and lands in your `:string` fields as
-  whatever it was. Convert the file first.
+* **A locale-specific number.** A thousands separator or currency symbol needs
+  a custom `Delimited.Type`. Dates such as `01/03/2024` can instead declare a
+  field `:format` that states how to read and write them.
+* **Invalid UTF-8 in a selected fixed-width field.** Delimited layouts are
+  byte-oriented, so another encoding can pass through unchanged into `:string`
+  fields. Fixed-width layouts reject invalid UTF-8 because it usually means the
+  declared byte positions or the source encoding are wrong.
 
 ## Formula injection
 
