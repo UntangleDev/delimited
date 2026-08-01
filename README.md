@@ -387,11 +387,12 @@ delivered confidently:
 * **A fixed-width record shorter than a declared field.** The field is absent,
   so the reader returns `:record_too_short` instead of guessing its bytes.
 * **A locale-specific number.** A thousands separator or currency symbol needs
-  a custom `Delimited.Type`. A date can instead declare a field `:format`.
-* **Invalid UTF-8 in a fixed-width field.** The delimited parser is byte-oriented
-  and passes other encodings through unchanged to a `:string` field. The fixed
-  layout refuses invalid UTF-8 because it usually means that the positions or
-  encoding are wrong.
+  a custom `Delimited.Type`. Dates such as `01/03/2024` can instead declare a
+  field `:format` that states how to read and write them.
+* **Invalid UTF-8 in a selected fixed-width field.** Delimited layouts are
+  byte-oriented, so another encoding can pass through unchanged into `:string`
+  fields. Fixed-width layouts reject invalid UTF-8 because it usually means the
+  declared byte positions or the source encoding are wrong.
 
 ## Formula injection
 

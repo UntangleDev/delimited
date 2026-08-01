@@ -20,10 +20,10 @@ should be relaxed without a decision recorded here.
   `Delimited.Type` is the answer. A locale-specific *date* is no longer refused;
   `:format` reads one, using `Calendar.strftime/3`'s directives so that a single
   declaration serves reading and writing.
-- Any encoding other than UTF-8. The delimited parser is byte-oriented, so
-  another encoding passes through into `:string` fields unchanged; the fixed
-  layout refuses a field whose bytes are not valid UTF-8, because there the
-  same input means the positions are being counted wrongly.
+- Invalid UTF-8 in a selected fixed-width field. The delimited parser is
+  byte-oriented, so another encoding passes through into `:string` fields
+  unchanged; the fixed layout refuses invalid UTF-8 because there the same
+  input means the positions or source encoding are wrong.
 - A fixed-width layout in characters rather than bytes.
 
 Fixed-width support was added in 0.2.0 and this list changed with it. A refusal
