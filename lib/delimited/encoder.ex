@@ -3,14 +3,15 @@ defmodule Delimited.Encoder do
 
   # Turns cells into one line of a file.
   #
-  # The counterpart of `Delimited.Parser`: what this writes, that reads back
-  # unchanged, for every value and every dialect. The one exception is
-  # `escape_formulas: true`, which deliberately alters the text it writes. See
-  # `Delimited.Dialect` for why that is opt-in.
+  # The counterpart of `Delimited.Parser`: every cell this writes under a
+  # delimited dialect is parsed back unchanged. `escape_formulas: true` is the
+  # exception because it deliberately alters the text. `Delimited.Dialect`
+  # owns that decision and its limits.
 
   alias Delimited.Dialect
 
-  # A spreadsheet evaluates a cell beginning with one of these.
+  # These ASCII leaders can make a spreadsheet import path treat a cell as a
+  # formula. `Delimited.Dialect` documents the option's limits.
   @formula_leaders [?=, ?+, ?-, ?@, ?\t, ?\r]
 
   @numeric ~r/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/
@@ -58,9 +59,20 @@ defmodule Delimited.Encoder do
     end
   end
 
-  defp needs_quoting?(text, dialect) do
-    :binary.match(text, [<<dialect.delimiter>>, <<dialect.quote_char>>, "\n", "\r"]) != :nomatch
-  end
+  # `:binary.match/2` compiles a pattern each time it receives a list. That made
+  # the default quoting path compile a new pattern for every cell; the write
+  # benchmark exposed the repeated work. The parser can compile once per input
+  # stream, but the encoder has no state shared by row calls. A direct byte scan
+  # avoids both repeated compilation and shared encoder state.
+  defp needs_quoting?(text, %{delimiter: delimiter, quote_char: quote_char}),
+    do: scan(text, delimiter, quote_char)
+
+  defp scan(<<>>, _delimiter, _quote_char), do: false
+  defp scan(<<byte, _rest::binary>>, byte, _quote_char), do: true
+  defp scan(<<byte, _rest::binary>>, _delimiter, byte), do: true
+  defp scan(<<?\n, _rest::binary>>, _delimiter, _quote_char), do: true
+  defp scan(<<?\r, _rest::binary>>, _delimiter, _quote_char), do: true
+  defp scan(<<_byte, rest::binary>>, delimiter, quote_char), do: scan(rest, delimiter, quote_char)
 
   defp enclose(text, dialect) do
     quote_char = <<dialect.quote_char>>

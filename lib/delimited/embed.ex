@@ -158,25 +158,32 @@ defmodule Delimited.Embed do
     end
   end
 
-  defp take({:one, name, _module, _required?, children}, row, pairs) do
+  defp take({:one, name, _module, required?, children}, row, pairs) do
     case fetch(row, name) do
+      {:ok, nil} when required? -> Error.new(:required_field_missing, field: name)
       {:ok, nil} -> collect(children, :absent, pairs)
       {:ok, embedded} -> collect(children, embedded, pairs)
       :error -> Error.new(:missing_value, field: name)
     end
   end
 
-  defp take({:many, name, _module, _required?, groups}, row, pairs) do
+  defp take({:many, name, _module, required?, groups}, row, pairs) do
     with {:ok, copies} <- fetch(row, name),
          {:ok, copies} <- fit(copies, length(groups), name) do
-      groups |> Enum.zip(copies) |> Enum.reduce_while(pairs, &take_copy/2)
+      groups
+      |> Enum.zip(copies)
+      |> Enum.reduce_while(pairs, &take_copy(&1, &2, name, required?))
     else
       :error -> Error.new(:missing_value, field: name)
       %Error{} = error -> error
     end
   end
 
-  defp take_copy({children, copy}, pairs) do
+  defp take_copy({_children, nil}, _pairs, name, true) do
+    {:halt, Error.new(:required_field_missing, field: name)}
+  end
+
+  defp take_copy({children, copy}, pairs, _name, _required?) do
     case collect(children, copy || :absent, pairs) do
       %Error{} = error -> {:halt, error}
       pairs -> {:cont, pairs}

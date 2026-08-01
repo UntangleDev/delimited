@@ -13,8 +13,8 @@ defmodule Delimited.Strftime do
   # weekday name that says nothing about the date, so a format using it is
   # refused when the schema compiles rather than failing on the first file.
   #
-  # A format is compiled once, when the schema compiles. Reading a million rows
-  # walks a list of directives rather than a format string.
+  # A format is compiled with the schema. Reading each row then walks the
+  # compiled directives rather than the format string.
 
   @type directive ::
           {:number, :year | :month | :day | :hour | :minute | :second, pos_integer()}

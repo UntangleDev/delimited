@@ -12,6 +12,15 @@ defmodule Delimited.PropertyTest do
   alias Delimited.Test.Order
   alias Delimited.Test.Payment
 
+  defmodule TextRow do
+    @moduledoc false
+    use Delimited.Schema
+
+    delimited_schema headers: false do
+      field :value, :string
+    end
+  end
+
   # Characters chosen to land on the parser's decisions rather than around them:
   # the delimiter, the quote, both line breaks, and text on either side.
   @awkward ["a", "é", " ", ",", "\t", "\"", "\n", "\r", "\r\n", "'", "="]
@@ -42,6 +51,30 @@ defmodule Delimited.PropertyTest do
         Employee |> Delimited.encode!(employees) |> Enum.to_list() |> IO.iodata_to_binary()
 
       assert Delimited.decode!(Employee, encoded) == employees
+    end
+  end
+
+  property "the writer either preserves text under read options or refuses it" do
+    check all(
+            value <- one_of([constant(nil), cell()]),
+            trim <- boolean(),
+            nulls <- member_of([[], [""], ["", "N/A"]])
+          ) do
+      row = %TextRow{value: value}
+      opts = [trim: trim, null: nulls]
+
+      result =
+        try do
+          encoded = TextRow |> Delimited.encode!([row], opts) |> Enum.to_list()
+          {:ok, IO.iodata_to_binary(encoded)}
+        rescue
+          error in Delimited.Error -> {:error, error}
+        end
+
+      case result do
+        {:ok, encoded} -> assert Delimited.decode!(TextRow, encoded, opts) == [row]
+        {:error, error} -> assert error.reason == :unrepresentable_value
+      end
     end
   end
 

@@ -3,10 +3,12 @@ defmodule Delimited.Type do
   The built-in field types and the behaviour for defining your own.
 
   A type is the only place where the text in a file becomes an Elixir term.
-  Reading calls `c:cast/2` with the cell's text; writing calls `c:dump/2` with
-  the term. Neither callback ever receives `nil`: an empty cell becomes the
-  field's default without reaching the type, and a `nil` value is written as the
-  dialect's first null string.
+  Reading calls `c:cast/2` with the cell's text. Writing calls `c:dump/2` with
+  the term, then applies the declared read rules and calls `c:cast/2` on the
+  resulting text. The writer refuses the value unless casting returns the same
+  term. Neither callback receives `nil`: an empty cell becomes the field's
+  default without reaching the type, and a `nil` value uses the field's null
+  handling.
 
   ## Built-in types
 
@@ -125,6 +127,10 @@ defmodule Delimited.Type do
 
   Use it as `field :postcode, Postcode`. The error string completes the sentence
   "cannot read _value_ as ...", so write a noun phrase rather than a sentence.
+
+  `cast/2` and `dump/2` must be inverses for every value the type writes. The
+  writer checks that contract before it emits a field and returns
+  `:unrepresentable_value` when the callbacks disagree.
 
   Options that `Delimited.Field` does not recognise are passed to a custom type
   as `opts`, so `field :price, Money, currency: "GBP"` reaches `cast/2` as

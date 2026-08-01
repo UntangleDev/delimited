@@ -2,8 +2,9 @@ defmodule Delimited.ReadmeTest do
   @moduledoc """
   Runs the README's examples.
 
-  The README is the first thing a reader copies. These tests exist so that it
-  cannot describe a library other than the one that is here.
+  The README is the first thing a reader copies. These tests keep its executable
+  examples synchronized with the library. Contract claims that are not examples
+  have their own tests beside the code that implements them.
   """
 
   use ExUnit.Case, async: true

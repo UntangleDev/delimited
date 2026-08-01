@@ -16,6 +16,10 @@ defmodule Delimited.Reader do
   # holds a cell index, the fixed layout produces the record's bytes and a field
   # holds a byte range. The two are told apart by whether the row's payload is a
   # binary, and by nothing else.
+  #
+  # This module also owns the read transformation for one field. The writer uses
+  # that operation before emitting a value, so read and write cannot acquire
+  # separate rules for trimming, nulls, padding, or casting.
 
   alias Delimited.Dialect
   alias Delimited.Embed
@@ -217,11 +221,19 @@ defmodule Delimited.Reader do
   defp cast_cell(%Field{} = field, nil, _row, _dialect), do: absent(field)
 
   defp cast_cell(%Field{} = field, {offset, length}, record, dialect) do
-    text = binary_part(record, offset, length)
+    read_field(field, binary_part(record, offset, length), dialect)
+  end
 
-    # Slicing by byte can cut a multi-byte character in half, which is what
-    # positions counted in characters rather than bytes produce. Refusing the
-    # cell reports that; casting the fragments would not.
+  defp cast_cell(%Field{} = field, index, cells, dialect) do
+    read_field(field, elem(cells, index), dialect)
+  end
+
+  @doc false
+  @spec read_field(Field.t(), binary(), Dialect.t()) :: {:ok, term()} | {:error, Error.t()}
+  def read_field(%Field{} = field, text, %Dialect{layout: :fixed} = dialect) do
+    # Slicing by byte can cut a multi-byte character in half. This usually means
+    # that the positions count characters instead of bytes. Refusing the field
+    # prevents the fragments from reaching a type as plausible text.
     if String.valid?(text) do
       text |> unpad(field) |> read(field, dialect)
     else
@@ -229,9 +241,7 @@ defmodule Delimited.Reader do
     end
   end
 
-  defp cast_cell(%Field{} = field, index, cells, dialect) do
-    cells |> elem(index) |> read(field, dialect)
-  end
+  def read_field(%Field{} = field, text, %Dialect{} = dialect), do: read(text, field, dialect)
 
   defp read(text, %Field{} = field, dialect) do
     text = trim(text, trim?(field, dialect))

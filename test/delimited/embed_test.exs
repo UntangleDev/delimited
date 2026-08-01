@@ -230,7 +230,7 @@ defmodule Delimited.EmbedTest do
   end
 
   describe "required" do
-    test "an absent group is an error where the schema says it must be there" do
+    test "an absent group is an error when reading or writing" do
       defmodule Invoiced do
         @moduledoc false
         use Delimited.Schema
@@ -246,6 +246,12 @@ defmodule Delimited.EmbedTest do
 
       assert {:ok, [_present]} =
                Delimited.decode(Invoiced, "id,billing_street,billing_city\n1,1 High St,\n")
+
+      error = assert_raise Error, fn -> encode(Invoiced, [%{id: 1, billing: nil}]) end
+
+      assert error.reason == :required_field_missing
+      assert error.field == :billing
+      assert error.line == 2
     end
   end
 

@@ -43,9 +43,10 @@ defmodule Delimited.Schema do
         field :sku, :string
       end
 
-  Any read or write can override them, so the dialect here should describe the
-  file the schema was written for, not the only file it will ever meet. See
-  `Delimited.Dialect`.
+  A read or write can override runtime options, so the dialect here should
+  describe the file the schema was written for. A call cannot change the layout
+  because the layout determines field positions and embedded shapes when the
+  schema compiles. See `Delimited.Dialect`.
 
   ## Repeated groups of columns
 
@@ -212,7 +213,8 @@ defmodule Delimited.Schema do
   A row holds a fixed number of columns, so a repeated group has to say how many
   times it repeats. Under the fixed layout the copies follow one another by the
   embedded schema's own width, or by a declared `:stride` where the file leaves
-  a gap between them.
+  a gap between them. When writing, a shorter list leaves the remaining groups
+  blank. A longer list is an error because the row has no columns for it.
   """
   defmacro embeds_many(name, schema, opts) do
     quote do
@@ -404,7 +406,17 @@ defmodule Delimited.Schema do
   @spec dialect_for!(module(), keyword() | atom()) :: Dialect.t()
   def dialect_for!(module, opts) do
     module = ensure_schema!(module)
+    declared = module.__delimited__(:dialect)
+    dialect = Dialect.merge!(declared, opts)
 
-    Dialect.merge!(module.__delimited__(:dialect), opts)
+    if dialect.layout == declared.layout do
+      dialect
+    else
+      raise ArgumentError,
+            "#{inspect(module)} is declared with layout #{inspect(declared.layout)}, but the " <>
+              "call-site options select #{inspect(dialect.layout)}. A layout determines the " <>
+              "compiled field positions and embedded shape. Declare another schema for the " <>
+              "other layout."
+    end
   end
 end

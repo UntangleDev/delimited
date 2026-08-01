@@ -14,7 +14,8 @@ defmodule Delimited.Field do
 
     * `:default` - the term used when the cell is empty or the column is absent.
       Defaults to `nil`. The default is used as declared and is never cast, so
-      it must already be a value of the field's type.
+      it must already be a value of the field's type. Writing `nil` is refused
+      when reading the resulting null cell would return a non-nil default.
 
     * `:required` - when `true`, an empty cell is a `:required_field_missing`
       error instead of `nil`. Defaults to `false`. A required field cannot also
@@ -22,11 +23,13 @@ defmodule Delimited.Field do
       unreachable.
 
     * `:trim` - strip surrounding whitespace from the cell before reading it.
-      Defaults to the dialect's `:trim`.
+      Defaults to the dialect's `:trim`. The writer refuses text that this rule
+      would change.
 
     * `:null` - the strings that mean "no value" for this field. Defaults to the
       dialect's `:null`. Use it for the file that writes `"N/A"` in one column
-      and leaves the rest blank.
+      and leaves the rest blank. The writer refuses a non-nil value whose text
+      is one of these strings.
 
     * `:format` - how a date or time is written, where the file does not use
       ISO 8601: `field :invoiced_on, :date, format: "%d/%m/%Y"`. Give a list to
@@ -76,8 +79,9 @@ defmodule Delimited.Field do
 
   A value is padded with the field's `:pad`. A field holding `nil` is left
   blank, whatever its `:pad`, which is the counterpart of the rule above: an
-  empty field filled with zeros would state a number the row never held. Both
-  directions therefore agree, and `nil` survives a round trip.
+  empty field filled with zeros would state a number the row never held. The
+  writer refuses `nil` if the field is required or if reading a blank field
+  would return a non-nil default.
 
   A value wider than its field is a `:value_too_wide` error. Truncating it would
   produce a file that parses and lies.

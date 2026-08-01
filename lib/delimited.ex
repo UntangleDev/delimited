@@ -17,10 +17,11 @@ defmodule Delimited do
       {:ok, employees} = Delimited.read(Employee, "employees.csv")
       :ok = Delimited.write(Employee, "employees.tsv", employees, :tsv)
 
-  The schema is the contract. A column the file holds and the schema does not
-  declare is ignored; a column the schema declares and the file does not hold is
-  an error, because that is the shape a renamed column takes and it would
-  otherwise read as a column of `nil`.
+  The schema is the contract. With a header row, a column the file holds and the
+  schema does not declare is ignored. A column the schema declares and the file
+  does not hold is an error, because that is the shape a renamed column takes.
+  Without a header row, every row must contain the declared number of cells
+  because no name identifies an extra column.
 
   ## Choosing a function
 
@@ -44,7 +45,7 @@ defmodule Delimited do
 
   A parse failure ends the file: after a misplaced quote, no later row can be
   trusted. A cast failure fails only its own row, so one unreadable date does
-  not cost you the other 99,999 rows.
+  not cost you the other rows.
 
       case Delimited.read(Employee, "employees.csv") do
         {:ok, employees} -> employees
@@ -66,8 +67,10 @@ defmodule Delimited do
 
   ## Options
 
-  Every function accepts the options in `Delimited.Dialect`, or a format name
-  such as `:tsv` or `:fixed`, applied on top of what the schema declared.
+  Every function accepts the runtime options in `Delimited.Dialect`, or a
+  format name such as `:tsv`, applied on top of what the schema declared. A call
+  cannot change the schema's layout because the layout determined field
+  positions and embedded shapes when the schema compiled.
 
   Read `Delimited.Dialect` before writing a file that another program will open
   as a spreadsheet. Its `:escape_formulas` note describes an injection that this
@@ -87,7 +90,7 @@ defmodule Delimited do
   @typedoc "A path to read, or an enumerable of binary slices."
   @type source :: Path.t() | Enumerable.t()
 
-  @typedoc "A row to write: the schema's struct, or a map holding every field's key."
+  @typedoc "A row to write: the schema's struct, or a map with the same top-level keys."
   @type row :: struct() | map()
 
   @read_modes [:read, :binary, :read_ahead]
@@ -121,7 +124,7 @@ defmodule Delimited do
         end
 
       {:error, posix} ->
-        {:error, [io_error(schema, path, posix)]}
+        {:error, [io_error(schema, path, :open, posix)]}
     end
   end
 
@@ -197,7 +200,8 @@ defmodule Delimited do
   end
 
   @doc """
-  Reads rows from a binary in memory, or raises the first error.
+  Reads rows from a binary or an enumerable of binary slices, or raises the
+  first error.
   """
   @spec decode!(module(), binary() | Enumerable.t(), options()) :: [row()]
   def decode!(schema, data, opts \\ []) do
@@ -210,16 +214,17 @@ defmodule Delimited do
   @doc """
   Writes `rows` to the file at `path`, replacing whatever is there.
 
-  A row may be the schema's struct, or any map holding a key for every declared
-  field.
+  A row may be the schema's struct or a map with the same top-level keys.
+  Embedded keys hold the nested structs, maps, or lists declared by the schema.
 
       :ok = Delimited.write(Employee, "employees.csv", employees)
       :ok = Delimited.write(Employee, "employees.tsv", employees, :tsv)
 
   Returns `{:error, error}` for the first row that cannot be written, or if the
-  file cannot be opened or closed. The rows before a failed row are already on
-  disk: write to a temporary path and rename it if a half-written file would be
-  worse than no file.
+  file cannot be opened, written, or closed. Before emitting a field, the writer
+  checks that the declared reader returns the same value. The rows before a
+  failed row are already on disk. Write to a temporary path and rename it if a
+  partial file would be worse than no file.
   """
   @spec write(module(), Path.t(), Enumerable.t(row()), options()) :: :ok | {:error, Error.t()}
   def write(schema, path, rows, opts \\ []) when is_binary(path) do
@@ -238,12 +243,16 @@ defmodule Delimited do
         end
 
       {:error, posix} ->
-        {:error, io_error(schema, path, posix)}
+        {:error, io_error(schema, path, :open, posix)}
     end
   end
 
   @doc """
   Writes `rows` to the file at `path`, or raises.
+
+  This function has the same replacement and partial-write behaviour as
+  `write/4`. Write to a temporary path and rename it if a partial file would be
+  worse than no file.
   """
   @spec write!(module(), Path.t(), Enumerable.t(row()), options()) :: :ok
   def write!(schema, path, rows, opts \\ []) do
@@ -353,7 +362,7 @@ defmodule Delimited do
   defp binwrite(device, iodata, schema, path) do
     case :file.write(device, iodata) do
       :ok -> :ok
-      {:error, posix} -> {:error, io_error(schema, path, posix)}
+      {:error, posix} -> {:error, io_error(schema, path, :write, posix)}
     end
   end
 
@@ -363,12 +372,12 @@ defmodule Delimited do
   defp close(device, schema, path) do
     case File.close(device) do
       :ok -> :ok
-      {:error, posix} -> {:error, io_error(schema, path, posix)}
+      {:error, posix} -> {:error, io_error(schema, path, :close, posix)}
     end
   end
 
-  defp io_error(schema, path, posix) do
-    Error.new(:io_error, schema: schema, path: path, detail: posix)
+  defp io_error(schema, path, operation, posix) do
+    Error.new(:io_error, schema: schema, path: path, operation: operation, detail: posix)
   end
 
   defp file_slices(path, chunk_size) do

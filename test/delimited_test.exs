@@ -3,7 +3,74 @@ defmodule DelimitedTest do
 
   alias Delimited.Error
   alias Delimited.Test.Employee
+  alias Delimited.Test.Payment
   alias Delimited.Test.Product
+
+  defmodule NullMarker do
+    @moduledoc false
+    use Delimited.Schema
+
+    delimited_schema headers: false, null: ["N/A"] do
+      field :value, :string
+    end
+  end
+
+  defmodule Trimmed do
+    @moduledoc false
+    use Delimited.Schema
+
+    delimited_schema headers: false, trim: true do
+      field :value, :string
+    end
+  end
+
+  defmodule FormattedTime do
+    @moduledoc false
+    use Delimited.Schema
+
+    delimited_schema headers: false do
+      field :value, :time, format: "%H:%M:%S"
+    end
+  end
+
+  defmodule Floating do
+    @moduledoc false
+    use Delimited.Schema
+
+    delimited_schema headers: false do
+      field :value, :float
+    end
+  end
+
+  defmodule FixedText do
+    @moduledoc false
+    use Delimited.Schema
+
+    delimited_schema :fixed do
+      field :value, :string, at: 1..4
+    end
+  end
+
+  defmodule NormalizingType do
+    @moduledoc false
+    @behaviour Delimited.Type
+
+    @impl true
+    def cast(text, _opts), do: {:ok, String.upcase(text)}
+
+    @impl true
+    def dump(value, _opts) when is_binary(value), do: {:ok, value}
+    def dump(_value, _opts), do: {:error, "text"}
+  end
+
+  defmodule Normalized do
+    @moduledoc false
+    use Delimited.Schema
+
+    delimited_schema headers: false do
+      field :value, NormalizingType
+    end
+  end
 
   doctest Delimited
 
@@ -126,9 +193,35 @@ defmodule DelimitedTest do
       assert Decimal.equal?(price, Decimal.new("9.99"))
     end
 
+    test "requires the declared cell count when the file has no header row" do
+      assert {:error, [%Error{reason: :row_length_mismatch, detail: {2, 3}}]} =
+               Delimited.decode(Product, "A-1\t9.99\textra\n")
+    end
+
     test "applies call-site options over the schema's dialect" do
       assert {:ok, [%Product{sku: "A-1"}]} =
                Delimited.decode(Product, "A-1;9.99\n", delimiter: ";")
+    end
+
+    @tag :tmp_dir
+    test "rejects call-site options that change the compiled layout", %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, "rows.txt")
+
+      calls = [
+        fn -> Delimited.read(Product, path, :fixed) end,
+        fn -> Delimited.stream(Product, [], :fixed) end,
+        fn -> Delimited.decode(Product, "", :fixed) end,
+        fn -> Delimited.write(Product, path, [], :fixed) end,
+        fn -> Delimited.encode!(Product, [], :fixed) end
+      ]
+
+      for call <- calls do
+        assert_raise ArgumentError, ~r/is declared with layout :delimited.*select :fixed/s, call
+      end
+
+      assert_raise ArgumentError, ~r/is declared with layout :fixed.*select :delimited/s, fn ->
+        Delimited.decode(Payment, "", :csv)
+      end
     end
 
     test "skips rows before the header row" do
@@ -185,10 +278,10 @@ defmodule DelimitedTest do
       assert encode(Product, [%Product{sku: "A-1", price: Decimal.new("9.99")}]) == "A-1\t9.99\n"
     end
 
-    test "writes a plain map holding every field" do
-      row = %{id: 1, name: "A", department: nil, hired_on: nil, salary: nil, active: nil}
+    test "writes a plain map holding every top-level key" do
+      row = %{id: 1, name: "A", department: nil, hired_on: nil, salary: nil, active: true}
 
-      assert encode(Employee, [row]) =~ "\n1,A,,,,\n"
+      assert encode(Employee, [row]) =~ "\n1,A,,,,true\n"
     end
 
     test "raises for a row that does not hold a field" do
@@ -218,6 +311,64 @@ defmodule DelimitedTest do
       rows = Stream.map([1, 2], fn id -> %Employee{id: id, name: "A"} end)
 
       assert Employee |> Delimited.encode!(rows) |> Enum.count() == 3
+    end
+
+    test "refuses nil in a required field" do
+      error = assert_raise Error, fn -> encode(Employee, [%Employee{name: nil}]) end
+
+      assert error.reason == :required_field_missing
+      assert error.field == :name
+    end
+
+    test "refuses nil where the declared default would replace it" do
+      error = assert_raise Error, fn -> encode(Employee, [%Employee{name: "A", active: nil}]) end
+
+      assert error.reason == :unrepresentable_value
+      assert error.field == :active
+      assert Exception.message(error) =~ "would read back as true"
+    end
+
+    test "refuses a real value that is also a null marker" do
+      error = assert_raise Error, fn -> encode(NullMarker, [%{value: "N/A"}]) end
+
+      assert error.reason == :unrepresentable_value
+      assert error.field == :value
+      assert Exception.message(error) =~ "would read back as nil"
+    end
+
+    test "refuses text that read-time trimming would change" do
+      error = assert_raise Error, fn -> encode(Trimmed, [%{value: " x "}]) end
+
+      assert error.reason == :unrepresentable_value
+      assert Exception.message(error) =~ ~s(would read back as "x")
+    end
+
+    test "refuses temporal precision absent from the declared format" do
+      error = assert_raise Error, fn -> encode(FormattedTime, [%{value: ~T[12:34:56.123456]}]) end
+
+      assert error.reason == :unrepresentable_value
+      assert Exception.message(error) =~ "would read back as ~T[12:34:56]"
+    end
+
+    test "refuses a term whose field type would read a different term" do
+      error = assert_raise Error, fn -> encode(Floating, [%{value: 2}]) end
+
+      assert error.reason == :unrepresentable_value
+      assert Exception.message(error) =~ "would read back as 2.0"
+    end
+
+    test "refuses fixed-width text whose padding would be stripped" do
+      error = assert_raise Error, fn -> encode(FixedText, [%{value: "A "}]) end
+
+      assert error.reason == :unrepresentable_value
+      assert Exception.message(error) =~ ~s(would read back as "A")
+    end
+
+    test "refuses a custom type whose callbacks are not inverses" do
+      error = assert_raise Error, fn -> encode(Normalized, [%{value: "lower"}]) end
+
+      assert error.reason == :unrepresentable_value
+      assert Exception.message(error) =~ ~s(would read back as "LOWER")
     end
   end
 
@@ -266,7 +417,8 @@ defmodule DelimitedTest do
     test "reports a file that cannot be opened", %{tmp_dir: tmp_dir} do
       path = Path.join(tmp_dir, "absent.csv")
 
-      assert {:error, [%Error{reason: :io_error, detail: :enoent, path: ^path} = error]} =
+      assert {:error,
+              [%Error{reason: :io_error, operation: :open, detail: :enoent, path: ^path} = error]} =
                Delimited.read(Employee, path)
 
       assert Exception.message(error) =~ "no such file or directory"
@@ -275,7 +427,7 @@ defmodule DelimitedTest do
     test "reports a file that cannot be written", %{tmp_dir: tmp_dir} do
       path = Path.join([tmp_dir, "absent", "employees.csv"])
 
-      assert {:error, %Error{reason: :io_error, detail: :enoent}} =
+      assert {:error, %Error{reason: :io_error, operation: :open, detail: :enoent}} =
                Delimited.write(Employee, path, [])
     end
 
@@ -301,6 +453,20 @@ defmodule DelimitedTest do
                Delimited.write(Employee, path, rows)
 
       assert File.read!(path) =~ "\n1,A,,,,true\n"
+    end
+
+    test "write returns an unrepresentable value as an error", %{tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, "employees.csv")
+
+      assert {:error,
+              %Error{
+                reason: :unrepresentable_value,
+                field: :active,
+                line: 2,
+                value: nil
+              }} = Delimited.write(Employee, path, [%Employee{name: "A", active: nil}])
+
+      assert File.read!(path) == "Employee ID,name,department,Hire Date,salary,active\n"
     end
 
     test "takes a format name", %{tmp_dir: tmp_dir} do

@@ -2,7 +2,7 @@ defmodule Delimited.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/UntangleDev/delimited"
-  @version "0.3.0"
+  @version "0.4.0"
 
   def project do
     [
@@ -23,6 +23,7 @@ defmodule Delimited.MixProject do
   defp deps do
     [
       {:decimal, "~> 2.0 or ~> 3.0", optional: true},
+      {:benchee, "~> 1.5", only: :dev},
       {:credo, "~> 1.7", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: :dev, runtime: false},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
@@ -46,7 +47,7 @@ defmodule Delimited.MixProject do
         "GitHub" => @source_url,
         "HexDocs" => "https://hexdocs.pm/delimited"
       },
-      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE .formatter.exs)
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE .formatter.exs bench/README.md)
     ]
   end
 
@@ -55,7 +56,12 @@ defmodule Delimited.MixProject do
       main: "readme",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md", "CHANGELOG.md", "LICENSE"],
+      extras: [
+        "README.md",
+        "CHANGELOG.md",
+        {"bench/README.md", filename: "benchmarks"},
+        "LICENSE"
+      ],
       groups_for_modules: [
         Schemas: [Delimited.Schema, Delimited.Field],
         Formats: [Delimited.Dialect],

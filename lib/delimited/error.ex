@@ -1,15 +1,16 @@
 defmodule Delimited.Error do
   @moduledoc """
-  The single error type returned or raised by every `Delimited` operation.
+  The matchable error type used for format, value, and handled file failures.
 
   Match on `:reason`. Show `Exception.message/1` to a human. The reason is part
   of the public contract; the message text is not.
 
   The struct carries as much position information as the failing operation
-  knows. A parse failure knows the line; a cast failure also knows the column,
-  the field, and the offending value; a header failure knows neither line nor
-  column. Every position field is therefore nullable, and code that reports
-  errors must tolerate `nil`.
+  knows. A parse failure knows the line. A cast failure also knows the column,
+  field, and offending value. A failure in a header row knows the line but not a
+  column; `:missing_header_row` has no position because no row was read. Every
+  position field is therefore nullable, and code that reports errors must
+  tolerate `nil`.
   """
 
   @typedoc """
@@ -42,13 +43,15 @@ defmodule Delimited.Error do
     * `:required_field_missing` - a field declared `required: true` had no value.
     * `:dump_failed` - a value could not be written as the field's type.
     * `:missing_value` - a row being written holds no key for a field.
+    * `:unrepresentable_value` - writing the value would change it or make it
+      unreadable under the field's declared read options.
     * `:value_too_wide` - a value is wider than the fixed-width field that must
       hold it. `:detail` holds `{width, actual}` byte counts.
 
   Environment:
 
-    * `:io_error` - the file could not be opened. `:detail` holds the POSIX
-      reason.
+    * `:io_error` - opening, writing, or closing the file failed. `:operation`
+      identifies that operation, and `:detail` holds the POSIX reason.
   """
   @type reason ::
           :unterminated_quote
@@ -65,6 +68,7 @@ defmodule Delimited.Error do
           | :required_field_missing
           | :dump_failed
           | :missing_value
+          | :unrepresentable_value
           | :io_error
 
   @type t :: %__MODULE__{
@@ -76,10 +80,22 @@ defmodule Delimited.Error do
           column: pos_integer() | nil,
           value: term(),
           detail: term(),
+          operation: :open | :write | :close | nil,
           path: Path.t() | nil
         }
 
-  defexception [:reason, :schema, :field, :header, :line, :column, :value, :detail, :path]
+  defexception [
+    :reason,
+    :schema,
+    :field,
+    :header,
+    :line,
+    :column,
+    :value,
+    :detail,
+    :operation,
+    :path
+  ]
 
   @doc false
   @spec new(reason(), keyword()) :: t()
@@ -164,7 +180,7 @@ defmodule Delimited.Error do
   end
 
   defp describe(%{reason: :required_field_missing}) do
-    "the field is required and the cell is empty. Supply a value, or drop " <>
+    "the field is required and has no value. Supply a value, or drop " <>
       "`required: true` from the field."
   end
 
@@ -178,8 +194,29 @@ defmodule Delimited.Error do
       "empty cell, or write rows of the schema's own struct."
   end
 
-  defp describe(%{reason: :io_error, detail: posix}) do
+  defp describe(%{reason: :unrepresentable_value, value: value, detail: detail}) do
+    "writing #{inspect(value)} would not preserve the value: #{detail}. Change the value, " <>
+      "or change the field declaration so that it reads the written text as the same term."
+  end
+
+  defp describe(%{reason: :io_error, operation: :open, detail: posix}) do
     "cannot open the file (#{inspect(posix)}: #{:file.format_error(posix)}). " <>
       "Check the path, the permissions, and that the parent directory exists."
+  end
+
+  defp describe(%{reason: :io_error, operation: :write, detail: posix}) do
+    "cannot write the file (#{inspect(posix)}: #{:file.format_error(posix)}). " <>
+      "Check the available space, the permissions, and the storage device."
+  end
+
+  defp describe(%{reason: :io_error, operation: :close, detail: posix}) do
+    "cannot finish writing the file (#{inspect(posix)}: #{:file.format_error(posix)}). " <>
+      "The file may be incomplete. Check the available space and storage device, then " <>
+      "replace the file from a complete source."
+  end
+
+  defp describe(%{reason: :io_error, detail: posix}) do
+    "a file operation failed (#{inspect(posix)}: #{:file.format_error(posix)}). " <>
+      "Check the path, permissions, available space, and storage device."
   end
 end
